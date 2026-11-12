@@ -1,0 +1,110 @@
+# 개발 메모
+
+기준 문서: `NetRecall_Lab_프로젝트_설계서_v1.1.md` (2026-11-12)
+날짜별 개발 결과(§0)와, 설계서와 다르게 결정했거나 설계서에 없는 동작을 구현에서 정한 내용(§1~)을 기록한다.
+
+## 0. 개발 기록
+
+### 2026-11-12
+
+설계서 Phase 2(학습 자료 연동)의 Markdown 쪽과, Phase 1의 백엔드 뼈대를 만들었다.
+
+| 영역 | 결과물 | 상태 |
+|---|---|---|
+| 공통 소스 인터페이스 | `integrations/sources/base.py` | 완료 (사용자 제공 코드) |
+| Markdown 어댑터 | `integrations/sources/markdown/` | 완료 (사용자 제공 코드) |
+| 동기화 계획 | `backend/services/concept_sync.py` | 완료 (사용자 제공 코드) |
+| 샘플 개념 | `samples/concepts/network/` — NET-001 OSI 7계층 → NET-005 IP 주소와 서브넷 → NET-010 Static Routing | 완료 |
+| 형식 명세 | `docs/markdown-concept-format.md` | 완료 |
+| 미리보기 스크립트 | `scripts/preview_concepts.py` — DB 반영 없이 검사, 읽기 오류 시 종료 코드 1 | 완료 |
+| DB 모델 | `backend/models/concept.py` — `concepts`, `concept_relations`, `concept_labs` | 완료 |
+| DB 반영 계층 | `backend/services/concept_store.py` — 상태 읽기·계획·반영을 한 트랜잭션으로, `dry_run` 지원 | 완료 |
+| API | `backend/main.py`, `backend/api/` — `/health`, `POST /sync/markdown`, `GET /concepts`, `GET /concepts/{id}` | 완료 |
+| 프로젝트 설정 | `pyproject.toml`, `.gitignore`, `.env.example`, `README.md` | 완료 |
+
+검증
+
+- 테스트 79개 통과 (`pytest`)
+
+  | 파일 | 개수 | 범위 |
+  |---|---:|---|
+  | `tests/sources/test_base.py` | 4 | 내용 해시, 인터페이스 |
+  | `tests/sources/test_markdown_parser.py` | 27 | frontmatter 검증, 제목 대체, 질문 섹션 |
+  | `tests/sources/test_markdown_scan.py` | 9 | 건너뛰기 규칙, 심볼릭 링크, 폴더 밖 경로, BOM·CRLF, 크기 상한, 오류 격리, id 중복 |
+  | `tests/services/test_concept_sync.py` | 15 | 생성·갱신·이동·보관·복구·충돌·참조 경고 |
+  | `tests/services/test_concept_store.py` | 13 | DB 반영, 연결 교체, 롤백, dry run, FK 검사 |
+  | `tests/test_api.py` | 6 | API 동작 |
+  | `tests/test_samples_and_preview.py` | 5 | 샘플 무결성, 미리보기 종료 코드 |
+
+- 실제 서버(uvicorn)를 띄워 샘플 3개 동기화, `/concepts`·`/docs` 응답 확인
+
+작업 중 확인한 것
+
+- 제공 코드에서 고쳐야 할 버그는 찾지 못했다. 설계서와 다르게 동작하는 부분은 §3에 적었다.
+- 제목 없는 파일은 이름을 바꾸면 `updated`로 분류된다 (§3).
+- PyYAML은 `802.1Q`를 문자열로, `22`·`yes`·날짜는 문자열이 아닌 값으로 읽는다 (§5).
+
+다음 작업
+
+1. FSRS 복습 엔진 (계획표 8단계): `review_cards`(`card_json` + `due_at`, D4), `review_logs`, 오늘 복습할 개념 API
+2. 그 전에 Alembic 도입 여부 결정 (§4 스키마 생성)
+3. 이후: LLM Provider 인터페이스와 AI 질문 생성·답안 평가 → UI → MVP(설계서 §7.1) 완성
+
+## 1. 결정 사항 (2026-11-12)
+
+다음 DB 모델(§3) 작업에 적용한다.
+
+| # | 설계서 | 변경 | 이유 |
+|---|---|---|---|
+| D1 | `concept_labs.scenario_id`가 `lab_scenarios`를 FK로 참조 | FK 없이 실습 id 문자열만 저장 | 실습 시나리오는 Phase 5에야 생긴다. 그 전에도 개념 파일의 `labs: [LAB-002]`를 잃지 않고 저장해야 한다 |
+| D2 | `concept_relations`의 양쪽이 `concepts` FK | FK 없이 저장 | 설계서 §A-4는 없는 개념 참조를 "경고만, 반영은 진행"으로 정했다. FK가 있으면 이런 관계를 저장할 수 없다. 대상 개념이 나중에 생기면 그대로 연결된다 |
+| D3 | `learning_progress` 테이블 | 지금은 만들지 않음 | 복습·실습 이력에서 계산할 수 있는 값이라 지금 만들면 중복 상태가 된다. 대시보드(P1)에서 성능 문제가 생기면 추가한다 |
+| D4 | `review_cards`에 `stability`, `difficulty`, `fsrs_state` 등 필드별 컬럼 | 라이브러리 카드를 `card_json`으로 통째로 저장하고, 조회용 `due_at`만 별도 컬럼 | 라이브러리 버전이 바뀌어도 직렬화 형식만 따르면 된다. 설계서 §3.4 원칙 1과 같은 방향 |
+
+React 도입 시점은 설계서대로 둔다(변경 없음).
+
+## 2. 진행 현황 정정
+
+설계서 §4.5는 아래 항목을 "완료"로 적었지만, 2026-11-12 시점 저장소에는 코드가 없었다.
+
+| 항목 | 출처 |
+|---|---|
+| `integrations/sources/base.py` | 사용자가 제공한 코드 그대로 |
+| `integrations/sources/markdown/adapter.py` | 사용자가 제공한 코드 그대로 |
+| `backend/services/concept_sync.py` | 사용자가 제공한 코드 그대로 |
+| `samples/concepts/` | 다시 작성 |
+| `scripts/preview_concepts.py` | 다시 작성 |
+| `docs/markdown-concept-format.md` | 다시 작성 (구현 기준) |
+| 테스트 | 다시 작성. 설계서의 "35개 케이스"와 개수는 다르다 |
+
+## 3. 구현에서 정해진 동작 (설계서에 없거나 다른 것)
+
+제공된 코드의 동작이며, 테스트로 고정했다.
+
+- **개념 id 형식**: 설계서는 "`NET-001` 형태". 구현은 대문자 접두사 아무거나 허용한다(`[A-Z][A-Z0-9]*-\d{3,}`, 예: `LNX-001`, `CLD-001`). Linux·클라우드 분야도 다루기 때문에 맞는 방향이다.
+- **내용 해시**: 설계서는 `source_ref`만 제외한다고 했다. 구현은 `source_type`도 제외한다.
+- **건너뛰는 폴더**: 설계서 목록 외에 `.git/`, `node_modules/`도 건너뛴다. `templates/`는 어느 깊이에 있어도 건너뛴다. `README.md`는 대소문자를 구분하지 않는다.
+- **설계서에 없는 오류 규칙**: 본문이 비면 오류. 자기 자신을 선수·연관 개념으로 지정하면 오류.
+- **`## 질문` 섹션**: 목록 항목만 질문이 되고, 섹션 안의 다른 문장은 버려진다.
+- **id 중복 시 "먼저 읽은 항목"**: 경로를 정렬한 순서 기준이다.
+- **`updated`는 이동을 포함할 수 있다**: 내용과 위치가 같이 바뀌면 `relocated`가 아니라 `updated`로 분류된다. DB 반영 계층은 `updated`에서도 `source_ref`를 갱신한다.
+- **제목 없는 파일의 이름 변경은 `updated`다**: `title`도 `# 제목`도 없으면 파일 이름이 제목이 되므로, 이름을 바꾸면 내용 해시가 바뀐다. 같은 행이 갱신될 뿐 복습 이력은 유지된다. 파일 정리를 자주 한다면 `title`을 명시하는 것이 좋다.
+
+## 4. DB·API 구현 (2026-11-12, 계획표 6·7단계)
+
+- **설계서 ERD에 없는 컬럼**: `concepts.keywords`, `concepts.seed_questions`(JSON), `created_at`. `seed_questions`는 개념 파일에 직접 쓴 질문이다. AI가 생성한 질문(`questions` 테이블, Phase 4)과 섞이지 않도록 이름을 나눴다.
+- **D2 구체화**: `concept_relations.from_concept_id`는 FK를 건다(출발 개념은 항상 있다). `to_concept_id`만 FK가 없다.
+- **보관해도 연결은 남긴다**: 보관된 개념의 관계·실습 연결 행은 지우지 않는다. 복구하면 새 내용으로 다시 채운다.
+- **`(source_type, source_ref)`에 유니크 제약을 두지 않았다**: 보관된 개념이 옛 경로를 그대로 갖고 있는 상태에서, 같은 경로에 다른 id의 개념이 새로 생길 수 있기 때문이다.
+- **트랜잭션 범위**: 파일 읽기는 트랜잭션 밖에서 하고, DB 상태 읽기 → 계획 수립 → 반영은 한 트랜잭션으로 묶었다. 반영 중 하나라도 실패하면 전부 되돌린다.
+- **SQLite FK**: 연결마다 `PRAGMA foreign_keys=ON`을 켠다. SQLite는 기본적으로 FK를 검사하지 않는다.
+- **스키마 생성**: 지금은 앱 시작 시 `create_all`을 쓴다. 기존 테이블의 컬럼 변경은 반영되지 않는다. Phase 3에서 테이블이 늘어나기 전에 Alembic 도입을 검토한다. 그 전까지 스키마가 바뀌면 `netrecall.db`를 지우고 다시 동기화한다.
+- **API 경로**: 설계서에 경로 정의가 없어 `POST /sync/markdown`, `GET /concepts`, `GET /concepts/{id}`로 정했다. Notion 소스가 붙으면 `POST /sync/notion`을 추가한다.
+- **시간대**: SQLite는 시간대를 저장하지 않으므로 UTC로 쓰고, 읽을 때는 시간대 없는 값으로 돌아온다.
+
+## 5. 미결 사항
+
+- **다른 소스의 보관된 개념도 id를 계속 점유한다**: Notion에서 보관된 `NET-001`이 있으면, Markdown의 `NET-001`은 계속 충돌로 보고된다. 소스를 옮길 때 문제가 된다. Notion 어댑터를 붙일 때 정한다.
+- **YAML 자동 형 변환**: 따옴표 없는 `22`(숫자), `yes`(참·거짓), `2024-01-01`(날짜)은 문자열이 아니어서 오류가 된다. 지금은 문서에 "따옴표로 감싸라"고만 적었다.
+- **테스트 경고**: Starlette 1.10이 `TestClient`에서 `httpx` 사용을 지원 중단 예정이라고 경고한다. 지금은 동작에 영향이 없다. 의존성을 올릴 때 다시 확인한다.
+- **실행 환경**: Codespaces의 Python은 3.14.2다. `requires-python`은 `>=3.11`로 두었다. Containerlab(Phase 5)은 Codespaces에서 동작하지 않을 가능성이 높아, 설계서 §4.4대로 Linux VM에서 진행한다.
