@@ -10,12 +10,17 @@
 - 원본에서 사라진 개념은 삭제하지 않고 archive한다. 복습 이력을 보존하기 위해서다.
 - 읽기에 실패한 파일에 있던 개념은 archive하지 않는다. 오타 하나로 이력이 사라지면 안 된다.
 - 다른 소스(Notion 등)가 이미 쓰고 있는 id는 덮어쓰지 않고 충돌로 보고한다.
+- 질문이 MIN_QUESTIONS개보다 적은 개념은 오류로 보고한다. 소스와 무관한 규칙이라 여기서 검사한다.
+  이미 저장된 개념이면 읽기 오류처럼 기존 상태를 유지한다.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from integrations.sources.base import FetchResult, RawConcept, SourceError
+
+# 질문 1개가 복습 카드 1장이 된다 (develop-memo D5)
+MIN_QUESTIONS = 3
 
 
 @dataclass(frozen=True)
@@ -67,10 +72,19 @@ def plan_sync(
     plan = SyncPlan(source_type=source_type, errors=list(fetched.errors))
     by_id = {e.concept_id: e for e in existing}
     failed_refs = {err.source_ref for err in fetched.errors}
+    invalid_ids: set[str] = set()
     incoming_ids: set[str] = set()
 
     for concept in fetched.concepts:
         current = by_id.get(concept.concept_id)
+
+        if len(concept.questions) < MIN_QUESTIONS:
+            plan.errors.append(SourceError(
+                concept.source_ref,
+                f"질문이 {MIN_QUESTIONS}개 이상 필요합니다 (현재 {len(concept.questions)}개)",
+            ))
+            invalid_ids.add(concept.concept_id)
+            continue
 
         if current and current.source_type != source_type:
             plan.errors.append(SourceError(
@@ -95,7 +109,7 @@ def plan_sync(
     for e in existing:
         if e.source_type != source_type or e.archived or e.concept_id in incoming_ids:
             continue
-        if e.source_ref in failed_refs:
+        if e.source_ref in failed_refs or e.concept_id in invalid_ids:
             plan.kept_due_to_error.append(e.concept_id)
         else:
             plan.archived.append(e.concept_id)

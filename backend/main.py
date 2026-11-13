@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from backend.api.concepts import router as concepts_router
+from backend.api.reviews import router as reviews_router
 from backend.database import init_db, make_engine, make_session_factory
 
 DEFAULT_CONCEPTS_DIR = Path(__file__).resolve().parent.parent / "samples" / "concepts"
@@ -30,4 +31,5 @@ def create_app(database_url: str | None = None, concepts_dir: str | Path | None 
         return {"status": "ok"}
 
     app.include_router(concepts_router)
+    app.include_router(reviews_router)
     return app

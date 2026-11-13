@@ -4,9 +4,9 @@ from backend.services.concept_sync import ExistingConcept, plan_sync
 from integrations.sources.base import FetchResult, RawConcept, SourceError
 
 
-def concept(cid="NET-001", ref="a.md", content="본문", **extra):
+def concept(cid="NET-001", ref="a.md", content="본문", questions=("Q1", "Q2", "Q3"), **extra):
     c = RawConcept(concept_id=cid, title=cid, content=content,
-                   source_type="markdown", source_ref=ref, **extra)
+                   source_type="markdown", source_ref=ref, questions=questions, **extra)
     return replace(c, content_hash=c.compute_hash())
 
 
@@ -110,3 +110,32 @@ def test_summary_counts():
     p = plan([concept()], [stored(concept("NET-002", "b.md"))])
     s = p.summary()
     assert s["created"] == 1 and s["archived"] == 1 and s["errors"] == 0
+
+
+# ---- 질문 최소 개수 (소스와 무관한 규칙) ----
+
+def test_concept_with_too_few_questions_is_error():
+    p = plan([concept(questions=("Q1", "Q2"))])
+    assert p.created == []
+    assert p.errors[0].source_ref == "a.md"
+    assert "3개 이상" in p.errors[0].message and "현재 2개" in p.errors[0].message
+
+
+def test_too_few_questions_keeps_stored_concept():
+    old = concept()
+    p = plan([concept(content="새 본문", questions=("Q1",))], [stored(old)])
+    assert p.kept_due_to_error == ["NET-001"]
+    assert not p.has_changes
+
+
+def test_too_few_questions_after_move_still_keeps_stored_concept():
+    # 경로가 바뀌어도 id로 알아보므로 보관하지 않는다
+    old = concept()
+    p = plan([concept(ref="moved.md", questions=())], [stored(old)])
+    assert p.kept_due_to_error == ["NET-001"] and p.archived == []
+
+
+def test_question_rule_applies_to_every_source():
+    c = replace(concept(questions=("Q1",)), source_type="notion", source_ref="page-1")
+    p = plan_sync("notion", FetchResult([c], []), [])
+    assert p.created == [] and p.errors[0].source_ref == "page-1"

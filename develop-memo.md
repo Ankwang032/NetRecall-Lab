@@ -1,6 +1,6 @@
 # 개발 메모
 
-기준 문서: `NetRecall_Lab_프로젝트_설계서_v1.1.md` (2026-11-12)
+기준 문서: [NetRecall_Lab_SDD_v1.1.md](NetRecall_Lab_SDD_v1.1.md) (2026-11-12)
 날짜별 개발 결과(§0)와, 설계서와 다르게 결정했거나 설계서에 없는 동작을 구현에서 정한 내용(§1~)을 기록한다.
 
 ## 0. 개발 기록
@@ -42,13 +42,52 @@
 
 - 제공 코드에서 고쳐야 할 버그는 찾지 못했다. 설계서와 다르게 동작하는 부분은 §3에 적었다.
 - 제목 없는 파일은 이름을 바꾸면 `updated`로 분류된다 (§3).
-- PyYAML은 `802.1Q`를 문자열로, `22`·`yes`·날짜는 문자열이 아닌 값으로 읽는다 (§5).
+- PyYAML은 `802.1Q`를 문자열로, `22`·`yes`·날짜는 문자열이 아닌 값으로 읽는다 (§6).
 
 다음 작업
 
 1. FSRS 복습 엔진 (계획표 8단계): `review_cards`(`card_json` + `due_at`, D4), `review_logs`, 오늘 복습할 개념 API
 2. 그 전에 Alembic 도입 여부 결정 (§4 스키마 생성)
 3. 이후: LLM Provider 인터페이스와 AI 질문 생성·답안 평가 → UI → MVP(설계서 §7.1) 완성
+
+### 2026-11-13
+
+설계서 Phase 3(FSRS 복습 시스템)의 백엔드와, 스키마 마이그레이션(Alembic)을 만들었다.
+
+| 영역 | 결과물 | 상태 |
+|---|---|---|
+| 마이그레이션 | `alembic.ini`, `backend/migrations/` — `0001` 개념 테이블, `0002` 복습 테이블. 앱 시작 시 자동 upgrade (D6) | 완료 |
+| 질문 최소 개수 | 개념마다 질문 3개 이상 필수 (D5). 모든 소스에 적용되도록 `concept_sync.py`에서 검사. 샘플 3개에 질문 1개씩 추가, 형식 명세 갱신 | 완료 |
+| FSRS 감싸기 | `integrations/fsrs/` — py-fsrs 6.3을 쓰는 유일한 곳 | 완료 |
+| DB 모델 | `backend/models/review.py` — `review_cards`, `review_logs` | 완료 |
+| 카드 동기화 | `backend/services/concept_store.py` — 개념 반영과 같은 트랜잭션에서 질문별 카드 생성·비활성화·복구 | 완료 |
+| 복습 서비스 | `backend/services/review_service.py` — 복습할 카드 조회, 평가 반영(카드 갱신 + 기록 추가를 한 트랜잭션) | 완료 |
+| API | `GET /reviews/due`, `POST /reviews` | 완료 |
+
+검증
+
+- 테스트 112개 통과 (`pytest`). 새로 추가·변경한 파일:
+
+  | 파일 | 개수 | 범위 |
+  |---|---:|---|
+  | `tests/test_migrations.py` | 3 | 마이그레이션 결과 = 모델, 반복 실행, `0001`에서 데이터 유지한 채 upgrade |
+  | `tests/test_fsrs.py` | 6 | 새 카드, 등급별 다음 복습일, 간격 증가, 잘못된 등급 |
+  | `tests/services/test_review_service.py` | 8 | 복습 대상 조회, 평가 반영, 비활성·보관 카드 거부, 롤백 |
+  | `tests/services/test_concept_store.py` | 20 (+7) | 질문 변경·복구·순서 변경·이동·보관 시 카드 처리 |
+  | `tests/services/test_concept_sync.py` | 19 (+4) | 질문 3개 미만 오류, 저장된 개념 유지(이동 포함), 소스 무관 적용 |
+  | `tests/test_api.py` | 11 (+5) | 복습 흐름, 422·404·409 |
+
+- 실제 서버(uvicorn)를 띄워 샘플 동기화 → 카드 9장 → Again·Good·Easy 평가 → 남은 카드 6장, `alembic_version = 0002` 확인
+
+작업 중 확인한 것
+
+- SQLAlchemy identity map은 객체를 약하게 참조한다. 같은 카드라도 방금 쓴 객체는 시간대가 있는 값, DB에서 다시 읽은 객체는 시간대 없는 값을 갖는다(§4 시간대). 복습 API는 응답에서 항상 KST(`+09:00`)로 바꿔 내보낸다(D7). 개념 API에는 시각 필드가 없다.
+- py-fsrs 기본 학습 단계는 1분·10분이다. 새 카드에 Again은 1분 뒤, Good은 10분 뒤, Easy는 며칠 뒤가 된다.
+
+다음 작업
+
+1. LLM Provider 인터페이스와 AI 질문 생성·답안 평가 (Phase 4). 카드의 질문(`review_cards.question`)을 기준으로 출제한다
+2. UI → MVP(설계서 §7.1) 완성
 
 ## 1. 결정 사항 (2026-11-12)
 
@@ -62,6 +101,14 @@
 | D4 | `review_cards`에 `stability`, `difficulty`, `fsrs_state` 등 필드별 컬럼 | 라이브러리 카드를 `card_json`으로 통째로 저장하고, 조회용 `due_at`만 별도 컬럼 | 라이브러리 버전이 바뀌어도 직렬화 형식만 따르면 된다. 설계서 §3.4 원칙 1과 같은 방향 |
 
 React 도입 시점은 설계서대로 둔다(변경 없음).
+
+### 2026-11-13 추가
+
+| # | 설계서 | 변경 | 이유 |
+|---|---|---|---|
+| D5 | `CONCEPTS ‖--o{ REVIEW_CARDS` (개수 규칙 없음) | 개념의 질문 1개 = 카드 1장. 개념마다 질문 3개 이상 필수. 어댑터가 아니라 동기화 계획(`plan_sync`)에서 검사해 Markdown·Notion에 같이 적용 | 개념 하나를 카드 한 장으로 복습하면 부족하다. 질문별로 기억 상태를 따로 추적한다 |
+| D6 | 스키마 관리 방식 없음 | Alembic. 앱 시작 시 `upgrade head` 자동 실행 | 복습 이력은 원본 파일에서 다시 만들 수 없다. 스키마가 바뀌어도 DB를 지우지 않아야 한다 |
+| D7 | 시간대 정의 없음 | API 응답의 시각은 KST(`+09:00`) 고정. DB 저장은 UTC | 사용자는 한국에서 쓴다. FSRS 라이브러리가 UTC로 계산하므로 저장은 UTC로 두고 내보낼 때만 바꾼다. 한국은 일광 절약 시간이 없어 고정 오프셋(`UTC+9`)을 쓴다 |
 
 ## 2. 진행 현황 정정
 
@@ -98,13 +145,30 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 - **`(source_type, source_ref)`에 유니크 제약을 두지 않았다**: 보관된 개념이 옛 경로를 그대로 갖고 있는 상태에서, 같은 경로에 다른 id의 개념이 새로 생길 수 있기 때문이다.
 - **트랜잭션 범위**: 파일 읽기는 트랜잭션 밖에서 하고, DB 상태 읽기 → 계획 수립 → 반영은 한 트랜잭션으로 묶었다. 반영 중 하나라도 실패하면 전부 되돌린다.
 - **SQLite FK**: 연결마다 `PRAGMA foreign_keys=ON`을 켠다. SQLite는 기본적으로 FK를 검사하지 않는다.
-- **스키마 생성**: 지금은 앱 시작 시 `create_all`을 쓴다. 기존 테이블의 컬럼 변경은 반영되지 않는다. Phase 3에서 테이블이 늘어나기 전에 Alembic 도입을 검토한다. 그 전까지 스키마가 바뀌면 `netrecall.db`를 지우고 다시 동기화한다.
+- **스키마 생성**: ~~앱 시작 시 `create_all`~~ → 2026-11-13부터 Alembic (D6, §5 참고).
 - **API 경로**: 설계서에 경로 정의가 없어 `POST /sync/markdown`, `GET /concepts`, `GET /concepts/{id}`로 정했다. Notion 소스가 붙으면 `POST /sync/notion`을 추가한다.
 - **시간대**: SQLite는 시간대를 저장하지 않으므로 UTC로 쓰고, 읽을 때는 시간대 없는 값으로 돌아온다.
 
-## 5. 미결 사항
+## 5. 복습 엔진 구현 (2026-11-13, 계획표 8단계)
+
+- **마이그레이션**: `init_db`가 Alembic `upgrade head`를 실행한다. 모델을 바꾸면 `alembic revision --autogenerate -m "설명"`으로 리비전을 만들고 내용을 검토해 커밋한다. SQLite라 `render_as_batch=True`이고, 제약 이름 규칙(`NAMING_CONVENTION`)을 `Base.metadata`에 정했다. 테스트 `test_migrations_match_models`가 리비전 누락을 잡는다.
+- **카드 식별**: `(concept_id, question_hash)` 유니크. 해시는 질문 문장(앞뒤 공백 제거 후) 그대로의 SHA-256이다.
+  - 새 질문 → 새 카드 (바로 복습 대상)
+  - 사라진 질문 → `active=false`. 행과 `review_logs`는 남는다
+  - 같은 문장이 다시 생김 → 같은 카드를 다시 활성화 (기억 상태 이어짐)
+  - 문장 수정(오타 포함) → 옛 카드 비활성 + 새 카드
+  - 순서 변경, 파일 이동, 개념 보관·복구 → 카드 변화 없음. 보관된 개념의 카드는 복습 목록에서만 빠진다
+- **설계서 ERD와 다른 컬럼**: `review_cards.id`는 정수 자동 증가(설계서는 string). `review_cards`에 `question_hash`, `question`, `active`, `created_at`, `updated_at`을 추가. `review_logs`에 py-fsrs `ReviewLog.to_dict()`를 담는 `log_json`을 추가(나중 파라미터 최적화용).
+- **"오늘 복습할 카드"**: `due_at <= 지금`. 기한이 오래된 순. 한국 시간 자정 기준 하루치 묶음은 쓰지 않았다.
+- **질문 개수 위반**: 오류로 보고한다. 이미 저장된 개념이면 경로가 바뀌었어도 id로 알아보고 `kept_due_to_error`로 유지한다(보관하지 않음).
+- **평가 등급**: 사용자가 1~4(Again·Hard·Good·Easy)를 직접 고른다. 설계서 §2.2-B대로 AI 점수와 분리한다.
+- **FSRS 설정**: py-fsrs 기본값(목표 기억률 0.9, fuzzing 켬). 테스트는 fuzzing을 끈 Scheduler로 확인한다.
+- **API 오류**: 없는 카드 404, 비활성 카드·보관된 개념의 카드 409, 등급 범위 밖 422.
+
+## 6. 미결 사항
 
 - **다른 소스의 보관된 개념도 id를 계속 점유한다**: Notion에서 보관된 `NET-001`이 있으면, Markdown의 `NET-001`은 계속 충돌로 보고된다. 소스를 옮길 때 문제가 된다. Notion 어댑터를 붙일 때 정한다.
 - **YAML 자동 형 변환**: 따옴표 없는 `22`(숫자), `yes`(참·거짓), `2024-01-01`(날짜)은 문자열이 아니어서 오류가 된다. 지금은 문서에 "따옴표로 감싸라"고만 적었다.
+- **Notion 어댑터**: 아직 저장소에 없다(설계서 §4.5 "예정"). 질문 3개 규칙은 동기화 계획에서 검사하므로 어댑터를 붙이면 그대로 적용된다. 시각을 내보내는 API를 새로 만들면 D7대로 KST로 바꾼다.
 - **테스트 경고**: Starlette 1.10이 `TestClient`에서 `httpx` 사용을 지원 중단 예정이라고 경고한다. 지금은 동작에 영향이 없다. 의존성을 올릴 때 다시 확인한다.
 - **실행 환경**: Codespaces의 Python은 3.14.2다. `requires-python`은 `>=3.11`로 두었다. Containerlab(Phase 5)은 Codespaces에서 동작하지 않을 가능성이 높아, 설계서 §4.4대로 Linux VM에서 진행한다.

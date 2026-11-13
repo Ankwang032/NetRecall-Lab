@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "PyYAML>=6.0",
     "SQLAlchemy>=2.0.22",
+    "alembic>=1.13",
+    "fsrs>=6.3,<7",
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]

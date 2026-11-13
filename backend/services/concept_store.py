@@ -2,15 +2,20 @@
 
 DB 현재 상태 읽기 → 계획 수립 → 반영을 한 트랜잭션으로 처리한다.
 반영 중 하나라도 실패하면 전부 되돌린다.
+개념의 질문과 복습 카드도 여기서 맞춘다 (질문 1개 = 카드 1장).
 """
 from __future__ import annotations
+
+import hashlib
+from datetime import datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend.models import Concept, ConceptLab, ConceptRelation
+from backend.models import Concept, ConceptLab, ConceptRelation, ReviewCard
 from backend.models.concept import utcnow
 from backend.services.concept_sync import ExistingConcept, SyncPlan, plan_sync
+from integrations.fsrs import new_card
 from integrations.sources.base import ConceptSource, RawConcept
 
 RELATION_FIELDS = (("prerequisite", "prerequisites"), ("related", "related"))
@@ -66,6 +71,7 @@ def apply_plan(session: Session, plan: SyncPlan) -> None:
     session.flush()  # 연결 테이블의 FK가 가리킬 개념 행을 먼저 쓴다
     for raw in plan.created + plan.updated + plan.restored:
         _replace_links(session, raw)
+        _sync_cards(session, raw, now)
     session.flush()
 
 
@@ -92,3 +98,33 @@ def _replace_links(session: Session, raw: RawConcept) -> None:
         for ref in getattr(raw, attr)
     )
     session.add_all(ConceptLab(concept_id=raw.concept_id, scenario_id=lab) for lab in raw.lab_ids)
+
+
+def question_hash(question: str) -> str:
+    return hashlib.sha256(question.encode("utf-8")).hexdigest()
+
+
+def _sync_cards(session: Session, raw: RawConcept, now: datetime) -> None:
+    """질문마다 카드 한 장. 사라진 질문의 카드는 비활성화하고, 다시 생기면 되살린다."""
+    cards = {
+        c.question_hash: c
+        for c in session.scalars(select(ReviewCard).where(ReviewCard.concept_id == raw.concept_id))
+    }
+    wanted = {question_hash(q): q for q in raw.questions}
+
+    for h, question in wanted.items():
+        card = cards.get(h)
+        if card is None:
+            card_json, due_at = new_card(now)
+            session.add(ReviewCard(
+                concept_id=raw.concept_id, question_hash=h, question=question,
+                card_json=card_json, due_at=due_at, created_at=now, updated_at=now,
+            ))
+        elif not card.active:
+            card.active = True
+            card.updated_at = now
+
+    for h, card in cards.items():
+        if h not in wanted and card.active:
+            card.active = False
+            card.updated_at = now

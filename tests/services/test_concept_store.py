@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from backend.database import init_db, make_engine, make_session_factory
-from backend.models import Concept, ConceptLab, ConceptRelation
+from backend.models import Concept, ConceptLab, ConceptRelation, ReviewCard
 from backend.services import concept_store
 from backend.services.concept_store import sync_source
 from integrations.sources.markdown import MarkdownConceptSource
@@ -25,10 +25,11 @@ def root(tmp_path):
     return d
 
 
-def write(root, rel, cid, body="본문", extra=""):
+def write(root, rel, cid, body="본문", extra="", questions="Q1, Q2, Q3"):
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\nid: {cid}\n{extra}---\n{body}\n", encoding="utf-8")
+    path.write_text(f"---\nid: {cid}\nquestions: [{questions}]\n{extra}---\n{body}\n",
+                    encoding="utf-8")
     return path
 
 
@@ -43,14 +44,14 @@ def links(session, cid):
 
 
 def test_creates_concepts_with_relations_and_labs(session, root):
-    write(root, "a.md", "NET-001", "# OSI\n본문\n\n## 질문\n- Q1",
+    write(root, "a.md", "NET-001", "# OSI\n본문\n\n## 질문\n- Q4",
           "keywords: [OSI]\nprerequisites: [NET-002]\nrelated: [NET-003]\nlabs: [LAB-001]\n")
     write(root, "b.md", "NET-002")
     plan = sync(session, root)
     assert plan.summary()["created"] == 2
 
     c = session.get(Concept, "NET-001")
-    assert (c.title, c.keywords, c.seed_questions, c.archived) == ("OSI", ["OSI"], ["Q1"], False)
+    assert (c.title, c.keywords, c.seed_questions, c.archived) == ("OSI", ["OSI"], ["Q1", "Q2", "Q3", "Q4"], False)
     assert links(session, "NET-001") == (
         {("prerequisite", "NET-002"), ("related", "NET-003")}, {"LAB-001"})
 
@@ -172,9 +173,89 @@ def test_failure_during_apply_rolls_back_everything(session, root, monkeypatch):
     with pytest.raises(RuntimeError):
         sync(session, root)
     assert session.scalars(select(Concept)).all() == []
+    assert session.scalars(select(ReviewCard)).all() == []
 
 
 def test_sqlite_foreign_keys_are_enforced(session):
     session.add(ConceptLab(concept_id="NET-404", scenario_id="LAB-001"))
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+# ---- 복습 카드 ----
+
+def cards(session, cid="NET-001"):
+    """{질문: (카드 id, active)}"""
+    rows = session.scalars(select(ReviewCard).where(ReviewCard.concept_id == cid))
+    return {c.question: (c.id, c.active) for c in rows}
+
+
+def test_new_concept_gets_one_due_card_per_question(session, root):
+    write(root, "a.md", "NET-001")
+    sync(session, root)
+    rows = session.scalars(select(ReviewCard)).all()
+    assert sorted(c.question for c in rows) == ["Q1", "Q2", "Q3"]
+    assert all(c.active and c.card_json["state"] == 1 for c in rows)
+    assert all(c.due_at == c.created_at for c in rows)  # 만들자마자 복습 대상
+
+
+def test_changed_question_deactivates_old_card_and_adds_new_one(session, root):
+    write(root, "a.md", "NET-001")
+    sync(session, root)
+    before = cards(session)
+    write(root, "a.md", "NET-001", questions="Q1, Q2, Q4")
+    sync(session, root)
+    after = cards(session)
+    assert after["Q1"] == before["Q1"] and after["Q2"] == before["Q2"]
+    assert after["Q3"] == (before["Q3"][0], False)  # 이력 보존을 위해 행은 남는다
+    assert after["Q4"][1] is True
+
+
+def test_question_added_back_reactivates_same_card(session, root):
+    write(root, "a.md", "NET-001")
+    sync(session, root)
+    q3_id = cards(session)["Q3"][0]
+    write(root, "a.md", "NET-001", questions="Q1, Q2, Q4")
+    sync(session, root)
+    write(root, "a.md", "NET-001", questions="Q3, Q2, Q1")
+    sync(session, root)
+    after = cards(session)
+    assert after["Q3"] == (q3_id, True)
+    assert after["Q4"][1] is False
+
+
+def test_reordering_questions_keeps_cards(session, root):
+    write(root, "a.md", "NET-001")
+    sync(session, root)
+    before = cards(session)
+    write(root, "a.md", "NET-001", questions="Q3, Q1, Q2")
+    plan = sync(session, root)
+    assert [c.concept_id for c in plan.updated] == ["NET-001"]
+    assert cards(session) == before
+
+
+def test_archive_and_restore_keep_cards(session, root):
+    path = write(root, "a.md", "NET-001")
+    sync(session, root)
+    before = cards(session)
+    path.unlink()
+    sync(session, root)
+    assert cards(session) == before  # 보관만으로는 카드를 건드리지 않는다
+    write(root, "a.md", "NET-001", "돌아옴")
+    sync(session, root)
+    assert cards(session) == before
+
+
+def test_move_keeps_cards(session, root):
+    path = write(root, "a.md", "NET-001", "# 제목\n본문")
+    sync(session, root)
+    before = cards(session)
+    path.rename(root / "moved.md")
+    sync(session, root)
+    assert cards(session) == before
+
+
+def test_dry_run_creates_no_cards(session, root):
+    write(root, "a.md", "NET-001")
+    sync(session, root, dry_run=True)
+    assert session.scalars(select(ReviewCard)).all() == []
