@@ -42,7 +42,7 @@
 
 - 제공 코드에서 고쳐야 할 버그는 찾지 못했다. 설계서와 다르게 동작하는 부분은 §3에 적었다.
 - 제목 없는 파일은 이름을 바꾸면 `updated`로 분류된다 (§3).
-- PyYAML은 `802.1Q`를 문자열로, `22`·`yes`·날짜는 문자열이 아닌 값으로 읽는다 (§6).
+- PyYAML은 `802.1Q`를 문자열로, `22`·`yes`·날짜는 문자열이 아닌 값으로 읽는다 (§7).
 
 다음 작업
 
@@ -89,6 +89,36 @@
 1. LLM Provider 인터페이스와 AI 질문 생성·답안 평가 (Phase 4). 카드의 질문(`review_cards.question`)을 기준으로 출제한다
 2. UI → MVP(설계서 §7.1) 완성
 
+### 2026-11-13 (2) — Phase 4 AI 학습 평가
+
+설계서 Phase 4의 백엔드(질문 생성, 답안 제출, 답안 평가, 피드백)를 만들었다. 실습 추천은 개념에 연결된 실습 id 중에서만 고른다.
+
+| 영역 | 결과물 | 상태 |
+|---|---|---|
+| LLM 인터페이스 | `integrations/llm/` — `LLMClient`(스키마로 검증된 객체 반환), Gemini 구현(google-genai 3.3), `GEMINI_API_KEY`·`NETRECALL_GEMINI_MODEL` (D8) | 완료 |
+| 프롬프트·스키마 | `backend/services/ai_prompts.py` — 변형 질문, 난이도 평가(D9), 답안 평가 5개 항목(D10), `PROMPT_VERSION` | 완료 |
+| DB 모델 | `backend/models/assessment.py` — `questions`, `answer_submissions`, `answer_evaluations`, 리비전 `0003` | 완료 |
+| 서비스 | `backend/services/assessment_service.py` — 질문 생성(호출 2번), 답안 평가(답안·평가 한 트랜잭션) | 완료 |
+| API | `POST /cards/{card_id}/questions`, `POST /questions/{question_id}/answers` | 완료 |
+| 공통 | `backend/core/time.py` — KST 변환을 복습·평가 API가 같이 쓴다 | 완료 |
+
+검증
+
+- 테스트 139개 통과 (`pytest`). 실제 Gemini는 호출하지 않는다(가짜 LLM `tests/fakes.py`).
+
+  | 파일 | 개수 | 범위 |
+  |---|---:|---|
+  | `tests/test_llm_gemini.py` | 8 | 요청 구성(system·JSON 스키마), 잘못된 응답·API 실패 → `LLMError`, 환경변수 |
+  | `tests/services/test_assessment_service.py` | 12 | 생성·난이도 별도 호출, 비활성·보관 카드 거부, 실패 시 미저장, 실습 id 걸러내기, 점수 범위 |
+  | `tests/test_api_assessments.py` | 7 | 전체 학습 흐름, 키 없음 503, LLM 실패 502, 404, 답안 길이 422 |
+
+- **실제 Gemini 호출은 아직 확인하지 못했다.** 작업 환경에 API 키가 없다. 기본 모델 `gemini-3.6-flash`는 Google 릴리스 노트(2026-07-21 GA)를 근거로 정했고, 모델 목록 문서끼리 내용이 달라 키를 넣고 확인해야 한다 (§7).
+
+다음 작업
+
+1. 실제 Gemini로 샘플 카드 질문 생성·평가 확인, 프롬프트 조정
+2. 기본 UI → MVP(설계서 §7.1) 완성
+
 ## 1. 결정 사항 (2026-11-12)
 
 다음 DB 모델(§3) 작업에 적용한다.
@@ -108,6 +138,9 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 |---|---|---|---|
 | D5 | `CONCEPTS ‖--o{ REVIEW_CARDS` (개수 규칙 없음) | 개념의 질문 1개 = 카드 1장. 개념마다 질문 3개 이상 필수. 어댑터가 아니라 동기화 계획(`plan_sync`)에서 검사해 Markdown·Notion에 같이 적용 | 개념 하나를 카드 한 장으로 복습하면 부족하다. 질문별로 기억 상태를 따로 추적한다 |
 | D6 | 스키마 관리 방식 없음 | Alembic. 앱 시작 시 `upgrade head` 자동 실행 | 복습 이력은 원본 파일에서 다시 만들 수 없다. 스키마가 바뀌어도 DB를 지우지 않아야 한다 |
+| D8 | LLM 제공자 미정 | Google Gemini (google-genai SDK). 모델은 `NETRECALL_GEMINI_MODEL`(기본 `gemini-3.6-flash`) | 사용자 결정. 모델 ID가 자주 바뀌므로 코드에 고정하지 않는다 |
+| D9 | "AI 질문 생성" | 카드 질문을 AI가 변형해 출제하고, 원래 질문 대비 난이도(-2~+2)를 **별도 호출**로 AI가 평가한다. AI는 FSRS 등급을 추천하지 않는다 | 외운 답을 반복하는 것을 막는다. 생성한 쪽이 자기 질문을 평가하면 "비슷함"으로 치우치므로 평가를 분리했다. 등급은 설계서 §2.2-B대로 사용자 몫 |
+| D10 | §2.2-C 표는 평가 항목 5개, JSON 예시는 점수 4개 | 표의 5개를 따른다. JSON에 `application`(응용력) 추가 | 사용자 결정 |
 | D7 | 시간대 정의 없음 | API 응답의 시각은 KST(`+09:00`) 고정. DB 저장은 UTC | 사용자는 한국에서 쓴다. FSRS 라이브러리가 UTC로 계산하므로 저장은 UTC로 두고 내보낼 때만 바꾼다. 한국은 일광 절약 시간이 없어 고정 오프셋(`UTC+9`)을 쓴다 |
 
 ## 2. 진행 현황 정정
@@ -165,10 +198,25 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 - **FSRS 설정**: py-fsrs 기본값(목표 기억률 0.9, fuzzing 켬). 테스트는 fuzzing을 끈 Scheduler로 확인한다.
 - **API 오류**: 없는 카드 404, 비활성 카드·보관된 개념의 카드 409, 등급 범위 밖 422.
 
-## 6. 미결 사항
+## 6. AI 평가 구현 (2026-11-13, Phase 4)
+
+- **LLM 호출과 트랜잭션**: 필요한 값을 읽고 트랜잭션을 끝낸 뒤 LLM을 호출하고, 결과는 새 트랜잭션에서 저장한다. 호출 중(수 초) SQLite를 잠그지 않는다.
+- **실패 처리**: LLM 호출·응답 검증이 실패하면 아무것도 저장하지 않고 502. 답안 평가가 실패하면 답안도 저장되지 않으므로, UI는 입력한 답안을 지우지 말아야 한다. 키가 없으면 AI API만 503.
+- **응답 형식**: Gemini에 Pydantic 모델의 JSON 스키마(`response_json_schema`)를 보내고, 받은 응답을 같은 모델로 다시 검증한다. 점수 0~100, 난이도 -2~2 범위 밖이면 실패로 처리한다.
+- **`recommended_lab`**: 개념에 연결된 실습(`concept_labs`)이 아닌 id가 오면 `null`로 바꾼다. 평가 전체를 버리지는 않는다.
+- **프롬프트**: `ai_prompts.py`. 바꾸면 `PROMPT_VERSION`을 올린다. 질문·평가 행에 모델명과 프롬프트 버전을 저장한다(설계서 §3.4 원칙 3). 답안 속 지시문을 따르지 말라는 규칙을 넣었다. temperature는 지정하지 않는다(모델 기본값).
+- **설계서 ERD와 다른 점**
+  - `questions`: `card_id`, `base_question`(생성 당시 카드 질문), `relative_difficulty`, `difficulty_reason`, `model`, `prompt_version`, `created_at` 추가. `question_type`은 변형 질문 한 종류뿐이라 두지 않았다.
+  - `answer_evaluations`: `score`는 정수(0~100). `model`, `prompt_version`, `created_at` 추가. 항목별 점수와 피드백은 `feedback_json`에 응답 그대로 저장한다.
+  - id는 모두 정수 자동 증가.
+- **질문 생성 시점**: 요청할 때마다 새로 만든다(미리 만들지 않음). 한 질문에 답안을 여러 번 낼 수 있다.
+
+## 7. 미결 사항
 
 - **다른 소스의 보관된 개념도 id를 계속 점유한다**: Notion에서 보관된 `NET-001`이 있으면, Markdown의 `NET-001`은 계속 충돌로 보고된다. 소스를 옮길 때 문제가 된다. Notion 어댑터를 붙일 때 정한다.
 - **YAML 자동 형 변환**: 따옴표 없는 `22`(숫자), `yes`(참·거짓), `2024-01-01`(날짜)은 문자열이 아니어서 오류가 된다. 지금은 문서에 "따옴표로 감싸라"고만 적었다.
 - **Notion 어댑터**: 아직 저장소에 없다(설계서 §4.5 "예정"). 질문 3개 규칙은 동기화 계획에서 검사하므로 어댑터를 붙이면 그대로 적용된다. 시각을 내보내는 API를 새로 만들면 D7대로 KST로 바꾼다.
+- **실제 Gemini 미확인**: 키를 넣고 (1) 기본 모델 ID가 실제로 있는지, (2) `response_json_schema`의 `minimum`/`maximum`/`anyOf(null)`이 받아들여지는지, (3) 질문·평가 품질을 샘플로 확인해야 한다.
+- **복습 기록과 답안 연결**: `review_logs`와 `answer_submissions`는 아직 연결되지 않는다. 설계서 Phase 6(답안 평가를 복습에 반영)에서 정한다.
 - **테스트 경고**: Starlette 1.10이 `TestClient`에서 `httpx` 사용을 지원 중단 예정이라고 경고한다. 지금은 동작에 영향이 없다. 의존성을 올릴 때 다시 확인한다.
 - **실행 환경**: Codespaces의 Python은 3.14.2다. `requires-python`은 `>=3.11`로 두었다. Containerlab(Phase 5)은 Codespaces에서 동작하지 않을 가능성이 높아, 설계서 §4.4대로 Linux VM에서 진행한다.

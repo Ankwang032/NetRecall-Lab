@@ -8,6 +8,7 @@ dependencies = [
     "SQLAlchemy>=2.0.22",
     "alembic>=1.13",
     "fsrs>=6.3,<7",
+    "google-genai>=3.3,<4",
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]

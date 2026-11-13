@@ -1,0 +1,73 @@
+from types import SimpleNamespace
+
+import pytest
+from pydantic import BaseModel, Field
+
+from integrations.llm import LLMError
+from integrations.llm import gemini
+from integrations.llm.gemini import DEFAULT_MODEL, GeminiClient, gemini_from_env
+
+
+class Answer(BaseModel):
+    value: int = Field(ge=0, le=10)
+
+
+class StubModels:
+    def __init__(self, result):
+        self.result = result
+        self.kwargs = None
+
+    def generate_content(self, **kwargs):
+        self.kwargs = kwargs
+        if isinstance(self.result, Exception):
+            raise self.result
+        return SimpleNamespace(text=self.result)
+
+
+@pytest.fixture
+def stub(monkeypatch):
+    holder = {}
+
+    def make(result):
+        models = StubModels(result)
+        monkeypatch.setattr(gemini.genai, "Client", lambda **_: SimpleNamespace(models=models))
+        holder["models"] = models
+        return GeminiClient("test-model", "key")
+
+    make.holder = holder
+    return make
+
+
+def test_sends_system_prompt_and_json_schema(stub):
+    client = stub('{"value": 3}')
+    assert client.generate(system="역할", prompt="질문", schema=Answer) == Answer(value=3)
+    kwargs = stub.holder["models"].kwargs
+    assert (kwargs["model"], kwargs["contents"]) == ("test-model", "질문")
+    config = kwargs["config"]
+    assert config.system_instruction == "역할"
+    assert config.response_mime_type == "application/json"
+    assert config.response_json_schema == Answer.model_json_schema()
+
+
+@pytest.mark.parametrize("text", ["not json", '{"value": 11}', "", None])
+def test_invalid_response_raises_llm_error(stub, text):
+    with pytest.raises(LLMError):
+        stub(text).generate(system="", prompt="", schema=Answer)
+
+
+def test_api_failure_raises_llm_error(stub):
+    with pytest.raises(LLMError, match="연결 끊김"):
+        stub(ConnectionError("연결 끊김")).generate(system="", prompt="", schema=Answer)
+
+
+def test_from_env_without_key_is_none(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    assert gemini_from_env() is None
+
+
+def test_from_env_uses_model_variable(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key")
+    monkeypatch.delenv("NETRECALL_GEMINI_MODEL", raising=False)
+    assert gemini_from_env().model == DEFAULT_MODEL
+    monkeypatch.setenv("NETRECALL_GEMINI_MODEL", "other-model")
+    assert gemini_from_env().model == "other-model"
