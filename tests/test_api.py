@@ -118,3 +118,20 @@ def test_review_archived_concept_is_409(tmp_path):
         client.post("/sync/markdown")
         assert client.get("/reviews/due").json() == []
         assert client.post("/reviews", json={"card_id": card_id, "rating": 3}).status_code == 409
+
+
+def test_serves_built_ui_at_root(tmp_path):
+    ui = tmp_path / "dist"
+    ui.mkdir()
+    (ui / "index.html").write_text("<title>NetRecall Lab</title>", encoding="utf-8")
+    app = create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES, frontend_dir=ui)
+    with TestClient(app) as c:
+        assert "NetRecall Lab" in c.get("/").text
+        assert c.get("/health").json() == {"status": "ok"}  # API가 먼저 매칭된다
+        assert c.get("/reviews/due").json() == []
+
+
+def test_root_is_404_without_built_ui(tmp_path):
+    app = create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES, frontend_dir=tmp_path / "없음")
+    with TestClient(app) as c:
+        assert c.get("/").status_code == 404

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from google.genai import errors
 from pydantic import BaseModel, Field
 
 from integrations.llm import LLMError
@@ -58,6 +59,24 @@ def test_invalid_response_raises_llm_error(stub, text):
 def test_api_failure_raises_llm_error(stub):
     with pytest.raises(LLMError, match="연결 끊김"):
         stub(ConnectionError("연결 끊김")).generate(system="", prompt="", schema=Answer)
+
+
+def quota_error(quota_id):
+    return errors.ClientError(429, {"error": {
+        "code": 429, "message": "You exceeded your current quota", "status": "RESOURCE_EXHAUSTED",
+        "details": [{"violations": [{"quotaId": quota_id}]}],
+    }})
+
+
+@pytest.mark.parametrize("quota_id, expected", [
+    ("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "1분쯤 뒤에"),
+    ("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "하루 사용량"),
+])
+def test_quota_error_is_short_message(stub, quota_id, expected):
+    with pytest.raises(LLMError) as info:
+        stub(quota_error(quota_id)).generate(system="", prompt="", schema=Answer)
+    assert expected in str(info.value)
+    assert "RESOURCE_EXHAUSTED" not in str(info.value)  # 원문 JSON을 화면에 내보내지 않는다
 
 
 def test_from_env_without_key_is_none(monkeypatch):

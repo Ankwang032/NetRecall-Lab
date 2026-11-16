@@ -10,8 +10,7 @@ from tests.fakes import FakeLLM
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples" / "concepts"
 
-VARIANT = prompts.VariantQuestion(question="변형 질문")
-SAME = prompts.DifficultyAssessment(relative_difficulty=0, reason="비슷하다")
+VARIANT = prompts.VariantQuestion(question="변형 질문", relative_difficulty=0, difficulty_reason="비슷하다")
 EVALUATION = prompts.AnswerEvaluation(
     score=75, accuracy=80, completeness=70, logic=75, technical_validity=80, application=65,
     strengths=["핵심을 짚음"], missing_points=["왕복 경로 누락"], technical_errors=[],
@@ -32,7 +31,7 @@ def static_routing_card(client):
 
 
 def test_full_learning_cycle(tmp_path):
-    client = client_with(tmp_path, VARIANT, SAME, EVALUATION)
+    client = client_with(tmp_path, VARIANT, EVALUATION)
     card_id = static_routing_card(client)
 
     res = client.post(f"/cards/{card_id}/questions")
@@ -70,7 +69,7 @@ def test_llm_failure_is_502(tmp_path):
 
 
 def test_answer_llm_failure_is_502(tmp_path):
-    client = client_with(tmp_path, VARIANT, SAME, LLMError("시간 초과"))
+    client = client_with(tmp_path, VARIANT, LLMError("시간 초과"))
     q = client.post(f"/cards/{static_routing_card(client)}/questions").json()
     assert client.post(f"/questions/{q['question_id']}/answers", json={"answer": "답"}).status_code == 502
 

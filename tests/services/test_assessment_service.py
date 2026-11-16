@@ -12,8 +12,9 @@ from integrations.llm import LLMError
 from integrations.sources.markdown import MarkdownConceptSource
 from tests.fakes import FakeLLM
 
-VARIANT = prompts.VariantQuestion(question="변형 질문")
-HARDER = prompts.DifficultyAssessment(relative_difficulty=1, reason="계산 단계가 하나 더 있다")
+VARIANT = prompts.VariantQuestion(
+    question="변형 질문", relative_difficulty=1, difficulty_reason="계산 단계가 하나 더 있다",
+)
 
 
 def evaluation(**overrides):
@@ -66,25 +67,22 @@ def card(session, root):
 
 @pytest.fixture
 def question(session, card):
-    return generate_question(session, FakeLLM(VARIANT, HARDER), card, utcnow()).id
+    return generate_question(session, FakeLLM(VARIANT), card, utcnow()).id
 
 
 # ---- 질문 생성 ----
 
-def test_generates_variant_and_assesses_difficulty_separately(session, card):
-    llm = FakeLLM(VARIANT, HARDER)
+def test_generates_variant_with_difficulty_in_one_call(session, card):
+    llm = FakeLLM(VARIANT)
     q = generate_question(session, llm, card, utcnow())
 
     assert (q.card_id, q.concept_id, q.base_question, q.question) == (card, "NET-010", "Q1", "변형 질문")
     assert (q.relative_difficulty, q.difficulty_reason) == (1, "계산 단계가 하나 더 있다")
     assert (q.model, q.prompt_version) == ("fake-model", prompts.PROMPT_VERSION)
 
-    first, second = llm.calls
-    assert first["schema"] is prompts.VariantQuestion
-    assert "라우팅 본문" in first["prompt"] and "Q1" in first["prompt"]
-    assert second["schema"] is prompts.DifficultyAssessment
-    assert second["system"] == prompts.DIFFICULTY_SYSTEM
-    assert "Q1" in second["prompt"] and "변형 질문" in second["prompt"]
+    (call,) = llm.calls  # 무료 등급 한도 때문에 난이도도 같은 호출에서 받는다
+    assert (call["schema"], call["system"]) == (prompts.VariantQuestion, prompts.VARIANT_SYSTEM)
+    assert "라우팅 본문" in call["prompt"] and "Q1" in call["prompt"]
 
 
 def test_unknown_card_raises_without_calling_llm(session):
@@ -108,7 +106,7 @@ def test_inactive_card_and_archived_concept_are_rejected(session, root, card):
 
 def test_llm_failure_stores_no_question(session, card):
     with pytest.raises(LLMError):
-        generate_question(session, FakeLLM(VARIANT, LLMError("난이도 평가 실패")), card, utcnow())
+        generate_question(session, FakeLLM(LLMError("생성 실패")), card, utcnow())
     assert session.scalars(select(Question)).all() == []
 
 
@@ -156,4 +154,4 @@ def test_evaluation_scores_must_be_0_to_100(field, value):
 @pytest.mark.parametrize("value", [-3, 3])
 def test_relative_difficulty_must_be_minus2_to_2(value):
     with pytest.raises(ValueError):
-        prompts.DifficultyAssessment(relative_difficulty=value, reason="이유")
+        prompts.VariantQuestion(question="질문", relative_difficulty=value, difficulty_reason="이유")

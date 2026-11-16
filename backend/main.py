@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from backend.api.assessments import router as assessments_router
 from backend.api.concepts import router as concepts_router
@@ -17,12 +18,14 @@ from integrations.llm import LLMClient
 from integrations.llm.gemini import gemini_from_env
 
 DEFAULT_CONCEPTS_DIR = Path(__file__).resolve().parent.parent / "samples" / "concepts"
+DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 def create_app(
     database_url: str | None = None,
     concepts_dir: str | Path | None = None,
     llm: LLMClient | None = None,
+    frontend_dir: str | Path | None = None,
 ) -> FastAPI:
     engine = make_engine(database_url)
     init_db(engine)
@@ -42,4 +45,9 @@ def create_app(
     app.include_router(concepts_router)
     app.include_router(reviews_router)
     app.include_router(assessments_router)
+
+    # 빌드된 UI(frontend에서 npm run build)가 있으면 /에서 보여 준다. 위 API 경로가 먼저 매칭된다
+    ui_dir = Path(frontend_dir or DEFAULT_FRONTEND_DIR)
+    if ui_dir.is_dir():
+        app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     return app

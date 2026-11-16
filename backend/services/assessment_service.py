@@ -21,7 +21,7 @@ class QuestionNotFound(LookupError):
 
 
 def generate_question(session: Session, llm: LLMClient, card_id: int, now: datetime) -> Question:
-    """카드 질문을 변형하고, 원래 질문 대비 난이도를 별도 호출로 평가해 저장한다."""
+    """카드 질문을 변형하고, 같은 호출에서 받은 원래 질문 대비 난이도와 함께 저장한다."""
     try:
         card = session.get(ReviewCard, card_id)
         if card is None:
@@ -36,15 +36,10 @@ def generate_question(session: Session, llm: LLMClient, card_id: int, now: datet
             system=prompts.VARIANT_SYSTEM, prompt=prompts.variant_prompt(context, base),
             schema=prompts.VariantQuestion,
         )
-        difficulty = llm.generate(
-            system=prompts.DIFFICULTY_SYSTEM,
-            prompt=prompts.difficulty_prompt(context, base, variant.question),
-            schema=prompts.DifficultyAssessment,
-        )
 
         question = Question(
             card_id=card_id, concept_id=concept_id, base_question=base, question=variant.question,
-            relative_difficulty=difficulty.relative_difficulty, difficulty_reason=difficulty.reason,
+            relative_difficulty=variant.relative_difficulty, difficulty_reason=variant.difficulty_reason,
             model=llm.model, prompt_version=prompts.PROMPT_VERSION, created_at=now,
         )
         session.add(question)

@@ -6,3 +6,7 @@ __pycache__/
 .env
 *.db
 *.sqlite3
+node_modules/
+frontend/dist/
+.claude
+*CLAUDE.md

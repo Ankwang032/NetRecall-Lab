@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from . import LLMError, T
 
@@ -29,8 +29,18 @@ class GeminiClient:
                 model=self.model, contents=prompt, config=config,
             )
             return schema.model_validate_json(response.text or "")
+        except errors.APIError as exc:
+            if exc.code == 429:  # 한도 초과. 원문 JSON은 길어서 화면에 그대로 내보내지 않는다
+                raise LLMError(_quota_message(exc)) from exc
+            raise LLMError(f"Gemini 호출 실패: {exc}") from exc
         except Exception as exc:
             raise LLMError(f"Gemini 호출 실패: {exc}") from exc
+
+
+def _quota_message(exc: errors.APIError) -> str:
+    if "PerDay" in str(exc):  # quotaId 예: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+        return "Gemini 하루 사용량 한도를 넘었습니다. 태평양 시간 자정(한국 시간 오후 4~5시)에 초기화됩니다."
+    return "Gemini 사용량 한도를 넘었습니다. 1분쯤 뒤에 다시 시도하세요."
 
 
 def gemini_from_env() -> GeminiClient | None:

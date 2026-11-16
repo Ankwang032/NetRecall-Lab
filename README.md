@@ -6,13 +6,21 @@
 pip install -e ".[dev]"
 pytest
 python scripts/preview_concepts.py samples/concepts   # DB 반영 없이 개념 폴더 검사
+cd frontend && npm install && npm test                 # UI 테스트
 ```
 
 ## 서버 실행
 
 ```bash
-uvicorn backend.main:create_app --factory --reload
+cp .env.example .env                 # GEMINI_API_KEY 입력
+(cd frontend && npm run build)       # UI 빌드. 처음 한 번, UI를 고친 뒤
+uvicorn backend.main:create_app --factory --reload --env-file .env
 ```
+
+- 화면: http://127.0.0.1:8000/ (Codespaces는 포트 탭의 8000번 주소). 동기화 → 복습할 카드 → AI 질문 → 답안 → 평가 → 등급 순서로 진행합니다. UI를 빌드하지 않았으면 `/`는 404입니다
+- UI를 고칠 때는 `cd frontend && npm run dev`로 Vite 서버(5173번)를 띄우면 저장하자마자 반영됩니다. API 요청은 8000번 FastAPI로 넘어갑니다
+
+API:
 
 - `POST /sync/markdown` (`?dry_run=true`로 미리보기): 개념 폴더를 DB에 동기화
 - `GET /concepts` (`?include_archived=true`), `GET /concepts/{id}`
@@ -23,7 +31,7 @@ uvicorn backend.main:create_app --factory --reload
 
 학습 흐름: `GET /reviews/due` → 질문 생성 → 답안 제출 → 피드백 확인 → 등급 선택
 
-AI 기능은 `GEMINI_API_KEY` 환경변수가 있어야 동작합니다. 없으면 AI API만 503을 돌려주고 나머지는 그대로 동작합니다.
+AI 기능은 `GEMINI_API_KEY` 환경변수가 있어야 동작합니다. 없으면 AI API만 503을 돌려주고 나머지는 그대로 동작합니다. Gemini 무료 등급은 분당 요청 5회이고, 질문 생성은 요청 2번, 답안 평가는 1번을 씁니다.
 - API 문서: http://127.0.0.1:8000/docs
 
 설정은 환경변수로 바꿉니다. [.env.example](.env.example) 참고.
