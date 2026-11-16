@@ -20,15 +20,26 @@ class QuestionNotFound(LookupError):
     pass
 
 
+def create_original_question(session: Session, card_id: int, now: datetime) -> Question:
+    """카드 질문을 그대로 출제한다. AI를 부르지 않는다. 답안 평가는 변형 질문과 같은 경로다."""
+    try:
+        card, concept = _reviewable_card(session, card_id)
+        question = Question(
+            card_id=card_id, concept_id=concept.id, base_question=card.question,
+            question=card.question, kind="original", created_at=now,
+        )
+        session.add(question)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return question
+
+
 def generate_question(session: Session, llm: LLMClient, card_id: int, now: datetime) -> Question:
     """카드 질문을 변형하고, 같은 호출에서 받은 원래 질문 대비 난이도와 함께 저장한다."""
     try:
-        card = session.get(ReviewCard, card_id)
-        if card is None:
-            raise CardNotFound(card_id)
-        concept = session.get_one(Concept, card.concept_id)
-        if not card.active or concept.archived:
-            raise CardNotReviewable(card_id)
+        card, concept = _reviewable_card(session, card_id)
         context, concept_id, base = _context(concept), concept.id, card.question
         session.rollback()  # LLM 호출 동안 읽기 트랜잭션을 잡지 않는다
 
@@ -39,6 +50,7 @@ def generate_question(session: Session, llm: LLMClient, card_id: int, now: datet
 
         question = Question(
             card_id=card_id, concept_id=concept_id, base_question=base, question=variant.question,
+            kind="variant",
             relative_difficulty=variant.relative_difficulty, difficulty_reason=variant.difficulty_reason,
             model=llm.model, prompt_version=prompts.PROMPT_VERSION, created_at=now,
         )
@@ -87,6 +99,16 @@ def evaluate_answer(
         session.rollback()
         raise
     return submission, evaluation
+
+
+def _reviewable_card(session: Session, card_id: int) -> tuple[ReviewCard, Concept]:
+    card = session.get(ReviewCard, card_id)
+    if card is None:
+        raise CardNotFound(card_id)
+    concept = session.get_one(Concept, card.concept_id)
+    if not card.active or concept.archived:
+        raise CardNotReviewable(card_id)
+    return card, concept
 
 
 def _context(concept: Concept) -> prompts.ConceptContext:

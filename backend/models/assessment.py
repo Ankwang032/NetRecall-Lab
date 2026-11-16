@@ -11,7 +11,11 @@ from backend.models.concept import utcnow
 
 
 class Question(Base):
-    """카드 질문을 AI가 변형한 질문. 난이도는 생성과 별도 호출로 평가한다."""
+    """출제한 질문.
+
+    kind="variant": 카드 질문을 AI가 변형한 질문. 난이도·모델·프롬프트 버전이 있다.
+    kind="original": 카드 질문 그대로. AI를 거치지 않아 난이도·모델·프롬프트 버전이 없다.
+    """
     __tablename__ = "questions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -19,10 +23,11 @@ class Question(Base):
     concept_id: Mapped[str] = mapped_column(ForeignKey("concepts.id"), index=True)
     base_question: Mapped[str] = mapped_column(Text)  # 생성 당시 카드 질문
     question: Mapped[str] = mapped_column(Text)
-    relative_difficulty: Mapped[int]  # -2 훨씬 쉬움 ~ +2 훨씬 어려움
-    difficulty_reason: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(100))
-    prompt_version: Mapped[str] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(16), server_default="variant")
+    relative_difficulty: Mapped[int | None]  # -2 훨씬 쉬움 ~ +2 훨씬 어려움
+    difficulty_reason: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(String(100))
+    prompt_version: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

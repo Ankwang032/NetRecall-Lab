@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { api, errorMessage, type DueCard, type ReviewResult, type SyncResponse } from "./api";
-import { Study } from "./Study";
+import { ArrowsClockwiseIcon, FilePlusIcon, GraphIcon, SpinnerIcon } from "@phosphor-icons/react";
+import { toast } from "sonner";
+import { api, errorMessage, type DueCard, type SyncResponse } from "@/api";
+import { ReviewList } from "@/components/ReviewList";
+import { StudySession } from "@/components/StudySession";
+import { UploadDialog } from "@/components/UploadDialog";
+import { Button } from "@/components/ui/button";
+import { Toaster } from "@/components/ui/sonner";
 
 const SYNC_LABELS: Record<string, string> = {
   created: "새로 추가",
@@ -12,27 +18,27 @@ const SYNC_LABELS: Record<string, string> = {
   kept_due_to_error: "오류로 이전 상태 유지",
 };
 
-function formatKst(iso: string) {
-  return new Date(iso).toLocaleString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+function summarize(summary: Record<string, number>) {
+  const parts = Object.entries(SYNC_LABELS)
+    .filter(([key]) => summary[key] > 0)
+    .map(([key, label]) => `${label} ${summary[key]}`);
+  return parts.length > 0 ? parts.join(" · ") : "개념 없음";
 }
 
 export function App() {
   const [cards, setCards] = useState<DueCard[] | null>(null);
-  const [selected, setSelected] = useState<DueCard | null>(null);
-  const [sync, setSync] = useState<SyncResponse | null>(null);
-  const [lastReview, setLastReview] = useState<ReviewResult | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [session, setSession] = useState<DueCard[] | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [syncIssues, setSyncIssues] = useState<SyncResponse | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   async function loadCards() {
     try {
       setCards(await api.dueCards());
+      setLoadError(null);
     } catch (e) {
-      setError(errorMessage(e));
+      setLoadError(errorMessage(e));
     }
   }
 
@@ -42,108 +48,68 @@ export function App() {
 
   async function runSync() {
     setSyncing(true);
-    setError(null);
-    setLastReview(null);
     try {
-      setSync(await api.sync());
+      const result = await api.sync();
+      setSyncIssues(result.errors.length > 0 || result.dangling_refs.length > 0 ? result : null);
+      toast.success("동기화했습니다", { description: summarize(result.summary) });
       await loadCards();
     } catch (e) {
-      setError(errorMessage(e));
+      toast.error("동기화하지 못했습니다", { description: errorMessage(e) });
     } finally {
       setSyncing(false);
     }
   }
 
-  function select(card: DueCard) {
-    setError(null);
-    setSync(null);
-    setLastReview(null);
-    setSelected(card);
+  // 고른 카드부터 목록 순서대로 이어서 학습한다
+  function start(card: DueCard) {
+    if (!cards) return;
+    const i = cards.indexOf(card);
+    setSession([...cards.slice(i), ...cards.slice(0, i)]);
   }
 
-  function finish(result: ReviewResult) {
-    setLastReview(result);
-    setSelected(null);
+  function exitSession() {
+    setSession(null);
     loadCards();
   }
 
   return (
-    <main>
-      <header>
-        <h1>NetRecall Lab</h1>
-        {!selected && (
-          <button onClick={runSync} disabled={syncing}>
-            {syncing ? "동기화 중…" : "개념 동기화"}
-          </button>
-        )}
+    <div className="min-h-dvh">
+      <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-3xl items-center gap-2 px-4">
+          <div className="flex items-center gap-2 font-semibold tracking-tight">
+            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <GraphIcon weight="bold" className="size-4" aria-hidden />
+            </span>
+            NetRecall Lab
+          </div>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button variant="outline" onClick={() => setUploadOpen(true)}>
+              <FilePlusIcon aria-hidden /> 개념 추가
+            </Button>
+            <Button variant="ghost" onClick={runSync} disabled={syncing}>
+              {syncing ? <SpinnerIcon className="animate-spin" aria-hidden /> : <ArrowsClockwiseIcon aria-hidden />}
+              동기화
+            </Button>
+          </div>
+        </div>
       </header>
-      {error && <p className="error" role="alert">{error}</p>}
 
-      {selected ? (
-        <Study card={selected} onDone={finish} onCancel={() => setSelected(null)} />
-      ) : (
-        <>
-          {sync && <SyncReport result={sync} />}
-          {lastReview && <p className="notice">다음 복습: {formatKst(lastReview.next_due_at)}</p>}
-          {cards === null ? (
-            !error && <p className="muted">불러오는 중…</p>
-          ) : (
-            <DueList cards={cards} onSelect={select} />
-          )}
-        </>
-      )}
-    </main>
-  );
-}
+      <main className="mx-auto max-w-3xl px-4 py-8">
+        {session ? (
+          <StudySession cards={session} onExit={exitSession} />
+        ) : (
+          <ReviewList
+            cards={cards}
+            error={loadError}
+            syncIssues={syncIssues}
+            onStart={start}
+            onUpload={() => setUploadOpen(true)}
+          />
+        )}
+      </main>
 
-function SyncReport({ result }: { result: SyncResponse }) {
-  const counts = Object.entries(SYNC_LABELS)
-    .filter(([key]) => result.summary[key] > 0)
-    .map(([key, label]) => `${label} ${result.summary[key]}`);
-  return (
-    <section className="notice">
-      <p>동기화 완료: {counts.length > 0 ? counts.join(" · ") : "개념 없음"}</p>
-      {result.errors.length > 0 && (
-        <>
-          <p className="error">읽지 못한 파일</p>
-          <ul>
-            {result.errors.map((e, i) => (
-              <li key={i}>{e.source_ref}: {e.message}</li>
-            ))}
-          </ul>
-        </>
-      )}
-      {result.dangling_refs.length > 0 && (
-        <>
-          <p>없는 개념을 가리키는 연결</p>
-          <ul>
-            {result.dangling_refs.map((r, i) => (
-              <li key={i}>{r.concept_id} → {r.ref}</li>
-            ))}
-          </ul>
-        </>
-      )}
-    </section>
-  );
-}
-
-function DueList({ cards, onSelect }: { cards: DueCard[]; onSelect: (card: DueCard) => void }) {
-  if (cards.length === 0) {
-    return <p className="muted">지금 복습할 카드가 없습니다. 개념 파일을 추가했다면 동기화하세요.</p>;
-  }
-  return (
-    <section>
-      <h2>복습할 카드 {cards.length}장</h2>
-      <ul className="cards">
-        {cards.map((card) => (
-          <li key={card.card_id}>
-            <button className="card" onClick={() => onSelect(card)}>
-              <span className="concept">{card.concept_id} · {card.concept_title}</span>
-              <span>{card.question}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
+      <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} onSaved={loadCards} />
+      <Toaster />
+    </div>
   );
 }

@@ -5,7 +5,9 @@ from backend.database import init_db, make_engine, make_session_factory
 from backend.models import AnswerEvaluation, AnswerSubmission, Question, ReviewCard
 from backend.models.concept import utcnow
 from backend.services import ai_prompts as prompts
-from backend.services.assessment_service import QuestionNotFound, evaluate_answer, generate_question
+from backend.services.assessment_service import (
+    QuestionNotFound, create_original_question, evaluate_answer, generate_question,
+)
 from backend.services.concept_store import sync_source
 from backend.services.review_service import CardNotFound, CardNotReviewable
 from integrations.llm import LLMError
@@ -78,11 +80,34 @@ def test_generates_variant_with_difficulty_in_one_call(session, card):
 
     assert (q.card_id, q.concept_id, q.base_question, q.question) == (card, "NET-010", "Q1", "변형 질문")
     assert (q.relative_difficulty, q.difficulty_reason) == (1, "계산 단계가 하나 더 있다")
-    assert (q.model, q.prompt_version) == ("fake-model", prompts.PROMPT_VERSION)
+    assert (q.kind, q.model, q.prompt_version) == ("variant", "fake-model", prompts.PROMPT_VERSION)
 
     (call,) = llm.calls  # 무료 등급 한도 때문에 난이도도 같은 호출에서 받는다
     assert (call["schema"], call["system"]) == (prompts.VariantQuestion, prompts.VARIANT_SYSTEM)
     assert "라우팅 본문" in call["prompt"] and "Q1" in call["prompt"]
+
+
+def test_original_question_is_card_question_without_llm(session, card):
+    q = create_original_question(session, card, utcnow())
+    assert (q.kind, q.card_id, q.base_question, q.question) == ("original", card, "Q1", "Q1")
+    assert (q.relative_difficulty, q.difficulty_reason, q.model, q.prompt_version) == (None, None, None, None)
+
+
+def test_answer_to_original_question_is_evaluated(session, card):
+    q = create_original_question(session, card, utcnow())
+    llm = FakeLLM(evaluation())
+    submission, ev = evaluate_answer(session, llm, q.id, "내 답안", utcnow())
+    assert (submission.question_id, ev.score) == (q.id, 80)
+    assert "Q1" in llm.calls[0]["prompt"]
+
+
+def test_original_question_rejects_unknown_and_inactive_cards(session, root, card):
+    with pytest.raises(CardNotFound):
+        create_original_question(session, 999, utcnow())
+    write(root, questions="Q2, Q3, Q4")  # Q1 카드 비활성
+    sync(session, root)
+    with pytest.raises(CardNotReviewable):
+        create_original_question(session, card, utcnow())
 
 
 def test_unknown_card_raises_without_calling_llm(session):

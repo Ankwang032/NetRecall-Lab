@@ -5,13 +5,15 @@ from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_session
 from backend.models import Concept, ConceptLab, ConceptRelation
 from backend.services.concept_store import sync_source
+from backend.services.concept_sync import SyncPlan
+from backend.services.concept_upload import NewFile, check_files, list_folders, save_files
 from integrations.sources.markdown import MarkdownConceptSource
 
 router = APIRouter()
@@ -54,6 +56,31 @@ class SyncResponse(BaseModel):
     dangling_refs: list[DanglingRef]
 
 
+class UploadFileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    content: str
+
+
+class UploadRequest(BaseModel):
+    folder: str = Field(default="", description="개념 폴더 기준 상대 경로. GET /concepts/folders 중 하나")
+    files: list[UploadFileIn] = Field(min_length=1, max_length=50)
+
+
+class FileCheckOut(BaseModel):
+    name: str
+    path: str
+    concept_id: str | None
+    title: str | None
+    question_count: int
+    errors: list[str]
+
+
+class UploadResponse(BaseModel):
+    saved: bool
+    files: list[FileCheckOut]
+    sync: SyncResponse | None  # 저장했을 때만
+
+
 @router.post("/sync/markdown")
 def sync_markdown(request: Request, session: SessionDep, dry_run: bool = False) -> SyncResponse:
     try:
@@ -61,11 +88,36 @@ def sync_markdown(request: Request, session: SessionDep, dry_run: bool = False) 
     except NotADirectoryError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     plan = sync_source(session, source, dry_run=dry_run)
-    return SyncResponse(
-        dry_run=dry_run,
-        summary=plan.summary(),
-        errors=[SyncIssue(source_ref=e.source_ref, message=e.message) for e in plan.errors],
-        dangling_refs=[DanglingRef(concept_id=c, ref=r) for c, r in plan.dangling_refs],
+    return _sync_response(plan, dry_run)
+
+
+@router.get("/concepts/folders")
+def folders(request: Request) -> list[str]:
+    """개념 파일을 올릴 수 있는 폴더 ("" = 개념 폴더 자체)."""
+    return list_folders(request.app.state.concepts_dir.resolve())
+
+
+@router.post("/concepts/files")
+def upload_files(
+    body: UploadRequest, request: Request, session: SessionDep, dry_run: bool = False,
+) -> UploadResponse:
+    """Markdown 개념 파일을 검사하고, 모두 통과하면 개념 폴더에 저장한 뒤 동기화한다.
+
+    하나라도 실패하면 아무것도 저장하지 않는다 (saved=false, 파일별 errors 확인).
+    """
+    root = request.app.state.concepts_dir.resolve()
+    files = [NewFile(f.name, f.content) for f in body.files]
+    try:
+        if dry_run:
+            checks, plan = check_files(session, root, body.folder, files), None
+        else:
+            checks, plan = save_files(session, root, body.folder, files)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return UploadResponse(
+        saved=plan is not None,
+        files=[FileCheckOut(**vars(c)) for c in checks],
+        sync=_sync_response(plan, False) if plan else None,
     )
 
 
@@ -89,6 +141,15 @@ def get_concept(concept_id: str, session: SessionDep) -> ConceptDetail:
         **_summary_fields(concept, links),
         content=concept.content,
         questions=concept.seed_questions,
+    )
+
+
+def _sync_response(plan: SyncPlan, dry_run: bool) -> SyncResponse:
+    return SyncResponse(
+        dry_run=dry_run,
+        summary=plan.summary(),
+        errors=[SyncIssue(source_ref=e.source_ref, message=e.message) for e in plan.errors],
+        dangling_refs=[DanglingRef(concept_id=c, ref=r) for c, r in plan.dangling_refs],
     )
 
 

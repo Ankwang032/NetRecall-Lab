@@ -21,8 +21,9 @@ export type Question = {
   concept_id: string;
   base_question: string;
   question: string;
-  relative_difficulty: number; // -2 훨씬 쉬움 ~ 2 훨씬 어려움
-  difficulty_reason: string;
+  kind: "original" | "variant";
+  relative_difficulty: number | null; // 변형 질문만. -2 훨씬 쉬움 ~ 2 훨씬 어려움
+  difficulty_reason: string | null;
   created_at: string;
 };
 
@@ -49,6 +50,23 @@ export type ReviewResult = {
   next_due_at: string;
 };
 
+export type UploadFile = { name: string; content: string };
+
+export type FileCheck = {
+  name: string;
+  path: string; // 개념 폴더 기준 저장 경로
+  concept_id: string | null;
+  title: string | null;
+  question_count: number;
+  errors: string[];
+};
+
+export type UploadResult = {
+  saved: boolean;
+  files: FileCheck[];
+  sync: SyncResponse | null;
+};
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
@@ -70,9 +88,16 @@ export function errorMessage(e: unknown) {
 export const api = {
   sync: () => request<SyncResponse>("POST", "/sync/markdown"),
   dueCards: () => request<DueCard[]>("GET", "/reviews/due"),
-  createQuestion: (cardId: number) => request<Question>("POST", `/cards/${cardId}/questions`),
+  createOriginalQuestion: (cardId: number) =>
+    request<Question>("POST", `/cards/${cardId}/questions/original`),
+  createVariantQuestion: (cardId: number) => request<Question>("POST", `/cards/${cardId}/questions`),
   submitAnswer: (questionId: number, answer: string) =>
     request<Evaluation>("POST", `/questions/${questionId}/answers`, { answer }),
   review: (cardId: number, rating: number) =>
     request<ReviewResult>("POST", "/reviews", { card_id: cardId, rating }),
+  folders: () => request<string[]>("GET", "/concepts/folders"),
+  checkFiles: (folder: string, files: UploadFile[]) =>
+    request<UploadResult>("POST", "/concepts/files?dry_run=true", { folder, files }),
+  saveFiles: (folder: string, files: UploadFile[]) =>
+    request<UploadResult>("POST", "/concepts/files", { folder, files }),
 };

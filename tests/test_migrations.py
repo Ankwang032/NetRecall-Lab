@@ -53,3 +53,31 @@ def test_upgrade_from_0001_keeps_existing_concepts(tmp_path):
         assert conn.execute(text("SELECT title FROM concepts")).scalar_one() == "OSI"
         assert conn.execute(text("SELECT count(*) FROM review_cards")).scalar_one() == 0
     engine.dispose()
+
+
+def test_upgrade_from_0003_marks_existing_questions_as_variant(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'm.db'}")
+    config = alembic_config()
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.upgrade(config, "0003")
+        conn.execute(text(
+            "INSERT INTO concepts (id, source_type, source_ref, content_hash, title, content,"
+            " keywords, seed_questions, archived, created_at, updated_at) VALUES"
+            " ('NET-001', 'markdown', 'a.md', 'h', 'OSI', '본문', '[]', '[]', 0,"
+            " '2026-11-13 00:00:00', '2026-11-13 00:00:00')"
+        ))
+        conn.execute(text(
+            "INSERT INTO review_cards (id, concept_id, question_hash, question, active, card_json,"
+            " due_at, created_at, updated_at) VALUES (1, 'NET-001', 'h', 'Q', 1, '{}',"
+            " '2026-11-13 00:00:00', '2026-11-13 00:00:00', '2026-11-13 00:00:00')"
+        ))
+        conn.execute(text(
+            "INSERT INTO questions (card_id, concept_id, base_question, question, relative_difficulty,"
+            " difficulty_reason, model, prompt_version, created_at) VALUES"
+            " (1, 'NET-001', 'Q', 'V', 0, '이유', 'm', 'p', '2026-11-13 00:00:00')"
+        ))
+    init_db(engine)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT kind, question FROM questions")).one() == ("variant", "V")
+    engine.dispose()

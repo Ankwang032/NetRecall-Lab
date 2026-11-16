@@ -52,6 +52,35 @@ def test_full_learning_cycle(tmp_path):
     assert client.post("/reviews", json={"card_id": card_id, "rating": 2}).status_code == 200
 
 
+def test_original_then_variant_cycle(tmp_path):
+    client = client_with(tmp_path, EVALUATION, VARIANT, EVALUATION)
+    card_id = static_routing_card(client)
+
+    res = client.post(f"/cards/{card_id}/questions/original")
+    assert res.status_code == 201
+    original = res.json()
+    assert original["kind"] == "original" and original["question"] == original["base_question"]
+    assert (original["relative_difficulty"], original["difficulty_reason"]) == (None, None)
+    res = client.post(f"/questions/{original['question_id']}/answers", json={"answer": "1차 답안"})
+    assert res.status_code == 201
+
+    # 필요하면 2차로 변형 질문을 받는다
+    variant = client.post(f"/cards/{card_id}/questions").json()
+    assert (variant["kind"], variant["question"]) == ("variant", "변형 질문")
+    res = client.post(f"/questions/{variant['question_id']}/answers", json={"answer": "2차 답안"})
+    assert res.status_code == 201
+    assert client.post("/reviews", json={"card_id": card_id, "rating": 3}).status_code == 200
+
+
+def test_original_question_works_without_api_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    client = TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES))
+    client.post("/sync/markdown")
+    card_id = client.get("/reviews/due").json()[0]["card_id"]
+    assert client.post(f"/cards/{card_id}/questions/original").status_code == 201
+    assert client.post("/cards/999/questions/original").status_code == 404
+
+
 def test_ai_endpoints_are_503_without_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     client = TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES))
