@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.env
+*.db
+*.sqlite3
+node_modules/
+frontend/dist/
+.claude
+*CLAUDE.md
