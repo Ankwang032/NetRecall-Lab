@@ -31,13 +31,13 @@ API:
 - `POST /concepts/files` (`?dry_run=true`로 검사만) `{"folder": "network", "files": [{"name": "ospf.md", "content": "..."}]}`: 개념 파일을 검사하고, 모두 통과하면 저장 후 동기화. 하나라도 실패하면 아무것도 저장하지 않습니다 (`saved: false`)
 - `GET /reviews/due`: 지금 복습할 카드 (개념의 질문 1개 = 카드 1장)
 - `POST /cards/{card_id}/questions/original`: 카드 질문을 그대로 출제 (AI 호출 없음)
-- `POST /cards/{card_id}/questions`: AI가 카드 질문을 변형하고, 원래 질문 대비 난이도(-2~+2)도 같은 호출에서 평가
+- `POST /cards/{card_id}/questions`: AI가 카드 질문을 변형하고, 별도 호출로 원래 질문 대비 난이도(-2~+2)를 평가
 - `POST /questions/{question_id}/answers` `{"answer": "..."}`: AI 답안 평가 (정확성·완전성·논리성·기술적 타당성·응용력)
 - `POST /reviews` `{"card_id": 1, "rating": 3}`: 평가 반영 (1=Again, 2=Hard, 3=Good, 4=Easy). 등급은 AI 점수와 별개로 직접 고릅니다
 
 학습 흐름: `GET /reviews/due` → 원래 질문 출제 → 답안 제출 → 피드백 확인 → (필요하면) 변형 질문 → 답안 제출 → 등급 선택
 
-AI 기능은 `GEMINI_API_KEY` 환경변수가 있어야 동작합니다. 없으면 AI API만 503을 돌려주고 나머지는 그대로 동작합니다. Gemini 무료 등급은 분당 5회·하루 20회이고, 변형 질문 생성과 답안 평가가 각각 1번씩 씁니다. 원래 질문만 풀면 카드 1장에 1번입니다.
+AI 기능은 `GEMINI_API_KEY` 환경변수가 있어야 동작합니다. 없으면 AI API만 503을 돌려주고 나머지는 그대로 동작합니다. Gemini 무료 등급은 분당 5회·하루 20회이고, 변형 질문은 2번(생성, 난이도 평가), 답안 평가는 1번 씁니다. 원래 질문만 풀면 카드 1장에 1번입니다.
 - API 문서: http://127.0.0.1:8000/docs
 
 설정은 환경변수로 바꿉니다. [.env.example](.env.example) 참고.

@@ -79,6 +79,18 @@ def test_quota_error_is_short_message(stub, quota_id, expected):
     assert "RESOURCE_EXHAUSTED" not in str(info.value)  # 원문 JSON을 화면에 내보내지 않는다
 
 
+@pytest.mark.parametrize("code, status, expected", [
+    (503, "UNAVAILABLE", "요청이 몰려"),
+    (504, "DEADLINE_EXCEEDED", "제시간에 오지 않았습니다"),
+])
+def test_server_error_is_short_message(stub, code, status, expected):
+    error = errors.ServerError(code, {"error": {"code": code, "message": "원문 메시지", "status": status}})
+    with pytest.raises(LLMError) as info:
+        stub(error).generate(system="", prompt="", schema=Answer)
+    assert expected in str(info.value) and "잠시 뒤에 다시 시도" in str(info.value)
+    assert status not in str(info.value)
+
+
 def test_from_env_without_key_is_none(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert gemini_from_env() is None

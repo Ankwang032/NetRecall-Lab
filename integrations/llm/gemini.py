@@ -32,6 +32,10 @@ class GeminiClient:
         except errors.APIError as exc:
             if exc.code == 429:  # 한도 초과. 원문 JSON은 길어서 화면에 그대로 내보내지 않는다
                 raise LLMError(_quota_message(exc)) from exc
+            if exc.code == 503:  # 모델 과부하. 보통 일시적이다
+                raise LLMError("Gemini 모델에 요청이 몰려 지금은 응답하지 못합니다. 잠시 뒤에 다시 시도하세요.") from exc
+            if exc.code == 504:  # 서버 쪽 처리 시간 초과
+                raise LLMError("Gemini 응답이 제시간에 오지 않았습니다. 잠시 뒤에 다시 시도하세요.") from exc
             raise LLMError(f"Gemini 호출 실패: {exc}") from exc
         except Exception as exc:
             raise LLMError(f"Gemini 호출 실패: {exc}") from exc
