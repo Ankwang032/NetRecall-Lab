@@ -9,7 +9,8 @@ from google.genai import errors, types
 from . import LLMError, T
 
 DEFAULT_MODEL = "gemini-3.6-flash"
-TIMEOUT_MS = 60_000
+# 개념 추출 한 번이 50초를 넘기도 해서(2026-11-21, gemini-3.6-flash) 60초에서 늘렸다
+TIMEOUT_MS = 120_000
 
 
 class GeminiClient:

@@ -2,22 +2,26 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.deps import get_session
+from backend.api.deps import get_llm, get_session
 from backend.models import Concept, ConceptLab, ConceptRelation
+from backend.services.concept_extract import KnownConcept
+from backend.services.concept_normalize import convert_file, plan_files
 from backend.services.concept_store import sync_source
 from backend.services.concept_sync import SyncPlan
 from backend.services.concept_upload import NewFile, check_files, list_folders, save_files
+from integrations.llm import LLMClient, LLMError
 from integrations.sources.markdown import MarkdownConceptSource
 
 router = APIRouter()
 SessionDep = Annotated[Session, Depends(get_session)]
+LLMDep = Annotated[LLMClient, Depends(get_llm)]
 
 
 class ConceptSummary(BaseModel):
@@ -81,6 +85,47 @@ class UploadResponse(BaseModel):
     sync: SyncResponse | None  # 저장했을 때만
 
 
+class NormalizePlanRequest(BaseModel):
+    files: list[UploadFileIn] = Field(min_length=1, max_length=50)
+    prefix: str = Field(default="NET", max_length=16, description="새 id의 접두사 (예: NET → NET-011)")
+
+
+class PlannedFileOut(BaseModel):
+    name: str
+    status: Literal["standard", "convert", "failed"] = Field(
+        description="standard: 이미 표준 형식이라 그대로 쓴다. convert: /concepts/normalize/convert로 바꾼다",
+    )
+    concept_id: str | None
+    title: str | None
+    warnings: list[str]
+    error: str | None
+
+
+class NormalizePlanResponse(BaseModel):
+    files: list[PlannedFileOut]
+
+
+class BatchConcept(BaseModel):
+    concept_id: str = Field(max_length=32)
+    title: str = Field(max_length=300)
+
+
+class ConvertRequest(BaseModel):
+    file: UploadFileIn
+    concept_id: str = Field(max_length=32, description="plan에서 정한 id")
+    batch: list[BatchConcept] = Field(
+        default_factory=list, max_length=50, description="함께 올린 다른 파일의 id·제목 (plan 결과)",
+    )
+
+
+class ConvertResponse(BaseModel):
+    name: str
+    concept_id: str
+    title: str
+    content: str
+    warnings: list[str]
+
+
 @router.post("/sync/markdown")
 def sync_markdown(request: Request, session: SessionDep, dry_run: bool = False) -> SyncResponse:
     try:
@@ -119,6 +164,36 @@ def upload_files(
         files=[FileCheckOut(**vars(c)) for c in checks],
         sync=_sync_response(plan, False) if plan else None,
     )
+
+
+@router.post("/concepts/normalize/plan")
+def normalize_plan(body: NormalizePlanRequest, request: Request, session: SessionDep) -> NormalizePlanResponse:
+    """형식이 다른 .md를 표준 형식으로 맞추기 1단계. AI 없이 파일별 처리 방법과 id를 정한다. 저장하지 않는다."""
+    root = request.app.state.concepts_dir.resolve()
+    try:
+        planned = plan_files(session, root, [NewFile(f.name, f.content) for f in body.files], body.prefix)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return NormalizePlanResponse(files=[PlannedFileOut(**vars(p)) for p in planned])
+
+
+@router.post("/concepts/normalize/convert")
+def normalize_convert(body: ConvertRequest, request: Request, session: SessionDep, llm: LLMDep) -> ConvertResponse:
+    """2단계. 파일 하나를 AI로 채워 표준 .md 내용을 돌려준다. 저장은 POST /concepts/files로 한다.
+
+    AI가 실패하면 502, LLM이 설정되지 않았으면 503.
+    """
+    root = request.app.state.concepts_dir.resolve()
+    batch = [KnownConcept(b.concept_id, b.title) for b in body.batch]
+    try:
+        converted = convert_file(
+            session, root, llm, NewFile(body.file.name, body.file.content), body.concept_id, batch,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ConvertResponse(**vars(converted))
 
 
 @router.get("/concepts")

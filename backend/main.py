@@ -12,10 +12,12 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.assessments import router as assessments_router
 from backend.api.concepts import router as concepts_router
+from backend.api.notion import router as notion_router
 from backend.api.reviews import router as reviews_router
 from backend.database import init_db, make_engine, make_session_factory
 from integrations.llm import LLMClient
 from integrations.llm.gemini import gemini_from_env
+from integrations.sources.notion import NotionClient, notion_from_env
 
 DEFAULT_CONCEPTS_DIR = Path(__file__).resolve().parent.parent / "samples" / "concepts"
 DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -26,6 +28,7 @@ def create_app(
     concepts_dir: str | Path | None = None,
     llm: LLMClient | None = None,
     frontend_dir: str | Path | None = None,
+    notion: NotionClient | None = None,
 ) -> FastAPI:
     engine = make_engine(database_url)
     init_db(engine)
@@ -37,6 +40,8 @@ def create_app(
     )
     # GEMINI_API_KEY가 없으면 None: AI 기능만 503이고 나머지는 동작한다
     app.state.llm = llm or gemini_from_env()
+    # NOTION_TOKEN이 없으면 None: Notion 가져오기 API만 503이다
+    app.state.notion = notion or notion_from_env()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -45,6 +50,7 @@ def create_app(
     app.include_router(concepts_router)
     app.include_router(reviews_router)
     app.include_router(assessments_router)
+    app.include_router(notion_router)
 
     # 빌드된 UI(frontend에서 npm run build)가 있으면 /에서 보여 준다. 위 API 경로가 먼저 매칭된다
     ui_dir = Path(frontend_dir or DEFAULT_FRONTEND_DIR)
