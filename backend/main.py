@@ -29,6 +29,7 @@ def create_app(
     llm: LLMClient | None = None,
     frontend_dir: str | Path | None = None,
     notion: NotionClient | None = None,
+    notion_database: str | None = None,
 ) -> FastAPI:
     engine = make_engine(database_url)
     init_db(engine)
@@ -42,6 +43,8 @@ def create_app(
     app.state.llm = llm or gemini_from_env()
     # NOTION_TOKEN이 없으면 None: Notion 가져오기 API만 503이다
     app.state.notion = notion or notion_from_env()
+    # 동기화할 Notion 데이터베이스 주소나 id. 없으면 POST /sync/notion만 503이다
+    app.state.notion_database = notion_database or os.environ.get("NETRECALL_NOTION_DATABASE")
 
     @app.get("/health")
     def health() -> dict[str, str]:

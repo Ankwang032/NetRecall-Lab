@@ -107,13 +107,18 @@ function SyncIssues({ result }: { result: SyncResponse }) {
     <Alert variant={result.errors.length > 0 ? "destructive" : "default"}>
       <WarningCircleIcon aria-hidden />
       <AlertTitle>
-        {result.errors.length > 0 ? `동기화하지 못한 파일 ${result.errors.length}개` : "없는 개념을 가리키는 연결"}
+        {result.errors.length > 0 ? `동기화하지 못한 항목 ${result.errors.length}개` : "동기화하며 확인할 내용"}
       </AlertTitle>
       <AlertDescription>
         <ul className="mt-1 list-disc space-y-0.5 pl-4">
           {result.errors.map((e, i) => (
             <li key={i}>
               <span className="font-mono">{e.source_ref}</span>: {e.message}
+            </li>
+          ))}
+          {result.warnings.map((w, i) => (
+            <li key={`warn-${i}`} className="text-warning">
+              <span className="font-mono">{w.source_ref}</span>: {w.message}
             </li>
           ))}
           {result.dangling_refs.map((r, i) => (

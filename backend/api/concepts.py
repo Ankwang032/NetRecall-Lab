@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.deps import get_llm, get_session
+from backend.api.deps import get_llm, get_notion, get_session
 from backend.models import Concept, ConceptLab, ConceptRelation
 from backend.services.concept_extract import KnownConcept
 from backend.services.concept_normalize import convert_file, plan_files
@@ -18,10 +18,12 @@ from backend.services.concept_sync import SyncPlan
 from backend.services.concept_upload import NewFile, check_files, list_folders, save_files
 from integrations.llm import LLMClient, LLMError
 from integrations.sources.markdown import MarkdownConceptSource
+from integrations.sources.notion import NotionClient, NotionConceptSource, NotionError
 
 router = APIRouter()
 SessionDep = Annotated[Session, Depends(get_session)]
 LLMDep = Annotated[LLMClient, Depends(get_llm)]
+NotionDep = Annotated[NotionClient, Depends(get_notion)]
 
 
 class ConceptSummary(BaseModel):
@@ -57,6 +59,7 @@ class SyncResponse(BaseModel):
     dry_run: bool
     summary: dict[str, int]
     errors: list[SyncIssue]
+    warnings: list[SyncIssue]  # 반영은 했지만 알릴 것 (Notion: 빠진 블록, 끊긴 연결 등)
     dangling_refs: list[DanglingRef]
 
 
@@ -133,6 +136,27 @@ def sync_markdown(request: Request, session: SessionDep, dry_run: bool = False) 
     except NotADirectoryError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     plan = sync_source(session, source, dry_run=dry_run)
+    return _sync_response(plan, dry_run)
+
+
+@router.post("/sync/notion")
+def sync_notion(request: Request, session: SessionDep, notion: NotionDep, dry_run: bool = False) -> SyncResponse:
+    """NETRECALL_NOTION_DATABASE 데이터베이스를 동기화한다. 설정이 없으면 503, Notion 조회가 실패하면 502."""
+    database = request.app.state.notion_database
+    if not database:
+        raise HTTPException(
+            status_code=503, detail="동기화할 Notion 데이터베이스가 설정되지 않았습니다 (NETRECALL_NOTION_DATABASE)",
+        )
+    try:
+        source = NotionConceptSource(notion, database)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503, detail="NETRECALL_NOTION_DATABASE가 Notion 데이터베이스 주소나 id가 아닙니다",
+        ) from exc
+    try:
+        plan = sync_source(session, source, dry_run=dry_run)
+    except NotionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return _sync_response(plan, dry_run)
 
 
@@ -224,6 +248,7 @@ def _sync_response(plan: SyncPlan, dry_run: bool) -> SyncResponse:
         dry_run=dry_run,
         summary=plan.summary(),
         errors=[SyncIssue(source_ref=e.source_ref, message=e.message) for e in plan.errors],
+        warnings=[SyncIssue(source_ref=w.source_ref, message=w.message) for w in plan.warnings],
         dangling_refs=[DanglingRef(concept_id=c, ref=r) for c, r in plan.dangling_refs],
     )
 

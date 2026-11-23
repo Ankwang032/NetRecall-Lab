@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowsClockwiseIcon, FilePlusIcon, GraphIcon, SpinnerIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { api, errorMessage, type DueCard, type SyncResponse } from "@/api";
+import { api, ApiError, errorMessage, type DueCard, type SyncResponse } from "@/api";
 import { ReviewList } from "@/components/ReviewList";
 import { StudySession } from "@/components/StudySession";
 import { UploadDialog } from "@/components/UploadDialog";
@@ -13,6 +13,7 @@ const SYNC_LABELS: Record<string, string> = {
   updated: "수정",
   relocated: "이동",
   restored: "복구",
+  taken_over: "넘겨받음",
   archived: "보관",
   unchanged: "변경 없음",
   kept_due_to_error: "오류로 이전 상태 유지",
@@ -23,6 +24,17 @@ function summarize(summary: Record<string, number>) {
     .filter(([key]) => summary[key] > 0)
     .map(([key, label]) => `${label} ${summary[key]}`);
   return parts.length > 0 ? parts.join(" · ") : "개념 없음";
+}
+
+// Notion 항목의 source_ref는 페이지 id라 보여 주지 않고 "Notion"으로 바꾼다 (메시지 앞에 행 이름이 있다)
+function mergeIssues(markdown: SyncResponse, notion: SyncResponse | null): SyncResponse {
+  const label = (items: SyncResponse["errors"]) => items.map((i) => ({ ...i, source_ref: "Notion" }));
+  return {
+    ...markdown,
+    errors: [...markdown.errors, ...label(notion?.errors ?? [])],
+    warnings: [...markdown.warnings, ...label(notion?.warnings ?? [])],
+    dangling_refs: [...markdown.dangling_refs, ...(notion?.dangling_refs ?? [])],
+  };
 }
 
 export function App() {
@@ -46,12 +58,26 @@ export function App() {
     loadCards();
   }, []);
 
+  // Markdown 폴더를 동기화하고, Notion 데이터베이스가 설정되어 있으면(503이 아니면) 이어서 동기화한다
   async function runSync() {
     setSyncing(true);
     try {
-      const result = await api.sync();
-      setSyncIssues(result.errors.length > 0 || result.dangling_refs.length > 0 ? result : null);
-      toast.success("동기화했습니다", { description: summarize(result.summary) });
+      const markdown = await api.sync();
+      let notion: SyncResponse | null = null;
+      try {
+        notion = await api.syncNotion();
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 503)) {
+          toast.error("Notion을 동기화하지 못했습니다", { description: errorMessage(e) });
+        }
+      }
+      const issues = mergeIssues(markdown, notion);
+      setSyncIssues(issues.errors.length + issues.warnings.length + issues.dangling_refs.length > 0 ? issues : null);
+      toast.success("동기화했습니다", {
+        description: notion
+          ? `Markdown ${summarize(markdown.summary)} / Notion ${summarize(notion.summary)}`
+          : summarize(markdown.summary),
+      });
       await loadCards();
     } catch (e) {
       toast.error("동기화하지 못했습니다", { description: errorMessage(e) });

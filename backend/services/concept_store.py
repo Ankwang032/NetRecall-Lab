@@ -50,8 +50,9 @@ def apply_plan(session: Session, plan: SyncPlan) -> None:
     for raw in plan.created:
         session.add(Concept(id=raw.concept_id, created_at=now, updated_at=now, **_fields(raw)))
 
-    # updated는 위치 변경을 포함할 수 있으므로 source_ref까지 전부 덮어쓴다
-    for raw in plan.updated + plan.restored:
+    # updated는 위치 변경을 포함할 수 있으므로 source_ref까지 전부 덮어쓴다.
+    # taken_over는 source_type도 새 소스로 바뀐다
+    for raw in plan.updated + plan.restored + plan.taken_over:
         concept = session.get_one(Concept, raw.concept_id)
         for key, value in _fields(raw).items():
             setattr(concept, key, value)
@@ -69,7 +70,7 @@ def apply_plan(session: Session, plan: SyncPlan) -> None:
         concept.updated_at = now
 
     session.flush()  # 연결 테이블의 FK가 가리킬 개념 행을 먼저 쓴다
-    for raw in plan.created + plan.updated + plan.restored:
+    for raw in plan.created + plan.updated + plan.restored + plan.taken_over:
         _replace_links(session, raw)
         _sync_cards(session, raw, now)
     session.flush()

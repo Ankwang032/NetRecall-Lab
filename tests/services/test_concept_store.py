@@ -152,6 +152,23 @@ def test_other_source_concept_is_not_overwritten(session, root):
     assert (c.source_type, c.title) == ("notion", "Notion 개념")
 
 
+def test_archived_concept_of_other_source_is_taken_over_with_cards(session, root):
+    """Notion에서 지운(보관된) 노트를 .md로 옮기면 같은 개념·카드를 이어 쓴다."""
+    write(root, "a.md", "NET-001")
+    sync(session, root)
+    before = cards(session)
+    concept = session.get(Concept, "NET-001")
+    concept.source_type, concept.source_ref, concept.archived = "notion", "page-1", True
+    session.commit()
+
+    plan = sync(session, root)
+    assert [c.concept_id for c in plan.taken_over] == ["NET-001"] and plan.errors == []
+    session.expire_all()
+    c = session.get(Concept, "NET-001")
+    assert (c.source_type, c.source_ref, c.archived) == ("markdown", "a.md", False)
+    assert cards(session) == before  # 복습 카드와 이력이 이어진다
+
+
 def test_dry_run_writes_nothing(session, root):
     write(root, "a.md", "NET-001")
     plan = sync(session, root, dry_run=True)

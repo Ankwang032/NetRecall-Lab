@@ -58,6 +58,7 @@ class SourceError:
 class FetchResult:
     concepts: list[RawConcept] = field(default_factory=list)
     errors: list[SourceError] = field(default_factory=list)
+    warnings: list[SourceError] = field(default_factory=list)  # 읽었지만 알릴 것 (빠진 블록, 끊긴 연결 등)
 
 
 @runtime_checkable

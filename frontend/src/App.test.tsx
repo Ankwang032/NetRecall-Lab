@@ -180,9 +180,11 @@ test("동기화 결과를 알리고 읽지 못한 파일을 보여 준 뒤 목�
         dry_run: false,
         summary: { created: 3, updated: 0, relocated: 0, restored: 0, archived: 0, unchanged: 1, kept_due_to_error: 0, errors: 1, dangling_refs: 0 },
         errors: [{ source_ref: "network/bad.md", message: "질문이 3개 이상 필요합니다" }],
+        warnings: [],
         dangling_refs: [],
       }];
     },
+    "POST /sync/notion": () => [503, { detail: "Notion이 설정되지 않았습니다 (NOTION_TOKEN)" }], // 설정 안 됨 → 조용히 건너뜀
   });
   const user = userEvent.setup();
   render(<App />);
@@ -190,44 +192,96 @@ test("동기화 결과를 알리고 읽지 못한 파일을 보여 준 뒤 목�
   expect(await screen.findByText("지금 복습할 카드가 없습니다")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "동기화" }));
   expect(await screen.findByText("새로 추가 3 · 변경 없음 1")).toBeTruthy();
-  expect(screen.getByText("동기화하지 못한 파일 1개")).toBeTruthy();
+  expect(screen.getByText("동기화하지 못한 항목 1개")).toBeTruthy();
   expect(screen.getByText("network/bad.md")).toBeTruthy();
   expect(await screen.findByText("카드 1장 · 개념 1개")).toBeTruthy();
+  expect(screen.queryByText("Notion을 동기화하지 못했습니다")).toBeNull();
 });
 
-test("md 파일을 올리면 검사 결과를 보여 주고, 모두 통과해야 저장된다", async () => {
-  const OSPF = "---\nid: NET-020\ntitle: OSPF\n---\nOSPF 본문\n";
-  let due: (typeof CARD)[] = [];
-  const check = (name: string) =>
-    name === "ospf.md"
-      ? { name, path: `network/${name}`, concept_id: "NET-020", title: "OSPF", question_count: 3, errors: [] }
-      : { name, path: `network/${name}`, concept_id: null, title: null, question_count: 0, errors: ["frontmatter(--- 블록)가 없습니다"] };
+const syncResult = (summary: Record<string, number>, extra: Record<string, unknown> = {}) =>
+  ({ dry_run: false, summary, errors: [], warnings: [], dangling_refs: [], ...extra });
+
+test("Notion 데이터베이스가 설정되어 있으면 이어서 동기화하고 결과를 함께 보여 준다", async () => {
   const calls = mockApi({
-    "GET /reviews/due": () => [200, due],
-    "GET /concepts/folders": () => [200, ["", "network"]],
-    "POST /concepts/files?dry_run=true": (body) =>
-      [200, { saved: false, files: body.files.map((f: { name: string }) => check(f.name)), sync: null }],
-    "POST /concepts/files": (body) => {
-      due = [CARD];
-      return [200, { saved: true, files: body.files.map((f: { name: string }) => check(f.name)), sync: null }];
-    },
+    "GET /reviews/due": () => [200, []],
+    "POST /sync/markdown": () => [200, syncResult({ unchanged: 3 })],
+    "POST /sync/notion": () => [200, syncResult({ created: 11, taken_over: 1 }, {
+      errors: [{ source_ref: "page-id-1", message: "IPv4 주소: 난이도는 1~5 정수여야 합니다" }],
+      warnings: [{ source_ref: "page-id-2", message: "정적 라우팅: Notion이 내보내지 못한 블록 1개를 뺐습니다" }],
+    })],
   });
   const user = userEvent.setup();
   render(<App />);
+  await user.click(await screen.findByRole("button", { name: "동기화" }));
 
+  expect(await screen.findByText("Markdown 변경 없음 3 / Notion 새로 추가 11 · 넘겨받음 1")).toBeTruthy();
+  expect(screen.getByText("동기화하지 못한 항목 1개")).toBeTruthy();
+  expect(screen.getByText(/IPv4 주소: 난이도는 1~5 정수여야 합니다/)).toBeTruthy();
+  expect(screen.getByText(/정적 라우팅: Notion이 내보내지 못한 블록 1개를 뺐습니다/)).toBeTruthy();
+  expect(screen.queryByText("page-id-1")).toBeNull(); // 페이지 id 대신 "Notion"
+  expect(screen.getAllByText("Notion")).toHaveLength(2);
+  expect(calls.map((c) => c.route).filter((r) => r.startsWith("POST /sync"))).toEqual(["POST /sync/markdown", "POST /sync/notion"]);
+});
+
+test("Notion 동기화가 실패해도 Markdown 결과는 반영하고 오류를 알린다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "POST /sync/markdown": () => [200, syncResult({ created: 1 })],
+    "POST /sync/notion": () => [502, { detail: "Notion 서버가 응답하지 않습니다 (502)." }],
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole("button", { name: "동기화" }));
+
+  expect(await screen.findByText("Notion을 동기화하지 못했습니다")).toBeTruthy();
+  expect(screen.getByText("Notion 서버가 응답하지 않습니다 (502).")).toBeTruthy();
+  expect(await screen.findByText("새로 추가 1")).toBeTruthy();
+});
+
+const OSPF = "---\nid: NET-020\ntitle: OSPF\n---\nOSPF 본문\n";
+const passed = (name: string, concept_id: string, title: string) =>
+  ({ name, path: `network/${name}`, concept_id, title, question_count: 3, errors: [] });
+const plan = (name: string, status: string, extra: Record<string, unknown> = {}) =>
+  ({ name, status, concept_id: null, title: null, warnings: [], error: null, ...extra });
+
+async function openDialog() {
+  const user = userEvent.setup();
+  render(<App />);
   await user.click(await screen.findByRole("button", { name: "개념 추가" }));
-  const dialog = await screen.findByRole("dialog");
+  return { user, dialog: await screen.findByRole("dialog") };
+}
+
+test("md 파일을 올리면 계획·검사 결과를 보여 주고, 모두 통과해야 저장된다", async () => {
+  let due: (typeof CARD)[] = [];
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, due],
+    "GET /concepts/folders": () => [200, ["", "network"]],
+    "POST /concepts/normalize/plan": (body) => [200, {
+      files: body.files.map((f: { name: string }) =>
+        f.name === "ospf.md"
+          ? plan(f.name, "standard", { concept_id: "NET-020", title: "OSPF" })
+          : plan(f.name, "failed", { error: "본문이 비어 있습니다" })),
+    }],
+    "POST /concepts/files?dry_run=true": (body) =>
+      [200, { saved: false, files: body.files.map((f: { name: string }) => passed(f.name, "NET-020", "OSPF")), sync: null }],
+    "POST /concepts/files": (body) => {
+      due = [CARD];
+      return [200, { saved: true, files: body.files.map((f: { name: string }) => passed(f.name, "NET-020", "OSPF")), sync: null }];
+    },
+  });
+  const { user, dialog } = await openDialog();
   await user.upload(within(dialog).getByLabelText(/끌어다 놓거나/), [
     new File([OSPF], "ospf.md", { type: "text/markdown" }),
-    new File(["본문만"], "bad.md", { type: "text/markdown" }),
+    new File(["---\nid: NET-030\n---\n"], "empty.md", { type: "text/markdown" }),
   ]);
 
-  expect(await within(dialog).findByText("frontmatter(--- 블록)가 없습니다")).toBeTruthy();
-  expect(within(dialog).getByText(/통과 · NET-020 OSPF · 질문 3개/)).toBeTruthy();
+  expect(await within(dialog).findByText("본문이 비어 있습니다")).toBeTruthy();
   const saveButton = within(dialog).getByRole("button", { name: "2개 저장" }) as HTMLButtonElement;
   expect(saveButton.disabled).toBe(true);
+  expect(count(calls, "POST /concepts/files?dry_run=true")).toBe(0); // 쓸 수 없는 파일이 있으면 검사하지 않는다
 
-  await user.click(within(dialog).getByRole("button", { name: "bad.md 빼기" }));
+  await user.click(within(dialog).getByRole("button", { name: "empty.md 빼기" }));
+  expect(await within(dialog).findByText(/통과 · NET-020 OSPF · 질문 3개/)).toBeTruthy();
   const save = within(dialog).getByRole("button", { name: "1개 저장" }) as HTMLButtonElement;
   await waitFor(() => expect(save.disabled).toBe(false));
   await user.click(save);
@@ -235,8 +289,155 @@ test("md 파일을 올리면 검사 결과를 보여 주고, 모두 통과해야
   expect(await screen.findByText("개념 1개를 추가했습니다")).toBeTruthy();
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(await screen.findByText("카드 1장 · 개념 1개")).toBeTruthy();
+  expect(calls.filter((c) => c.route === "POST /concepts/normalize/plan").at(-1)?.body).toEqual({
+    files: [{ name: "ospf.md", content: OSPF }],
+  });
   expect(calls.find((c) => c.route === "POST /concepts/files")?.body).toEqual({
     folder: "",
     files: [{ name: "ospf.md", content: OSPF }],
   });
+});
+
+test("형식이 다른 파일은 AI로 맞춘 내용을 검사하고 저장한다", async () => {
+  const NOTE = "# 정적 라우팅\n\n본문\n\n## 질문\n- 하나\n- 둘\n- 셋\n";
+  const CONVERTED = "---\nid: NET-011\ntitle: 정적 라우팅\n---\n\n# 정적 라우팅\n\n본문\n";
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/folders": () => [200, [""]],
+    "POST /concepts/normalize/plan": (body) => [200, {
+      files: body.files.map((f: { name: string }) => f.name === "routing.md"
+        ? plan(f.name, "convert", { concept_id: "NET-011", title: "정적 라우팅", warnings: ["모르는 frontmatter 키를 버렸습니다: aliases"] })
+        : plan(f.name, "standard", { concept_id: "NET-020", title: "OSPF" })),
+    }],
+    "POST /concepts/normalize/convert": (body) => [200, {
+      name: body.file.name, concept_id: body.concept_id, title: "정적 라우팅", content: CONVERTED,
+      warnings: ["선수 개념 NET-999는 없어서 뺐습니다"],
+    }],
+    "POST /concepts/files?dry_run=true": (body) => [200, {
+      saved: false, sync: null,
+      files: body.files.map((f: { name: string }) =>
+        f.name === "routing.md" ? passed(f.name, "NET-011", "정적 라우팅") : passed(f.name, "NET-020", "OSPF")),
+    }],
+    "POST /concepts/files": (body) => [200, { saved: true, files: body.files.map((f: { name: string }) => passed(f.name, "X", "X")), sync: null }],
+  });
+  const { user, dialog } = await openDialog();
+  await user.upload(within(dialog).getByLabelText(/끌어다 놓거나/), [
+    new File([NOTE], "routing.md", { type: "text/markdown" }),
+    new File([OSPF], "ospf.md", { type: "text/markdown" }),
+  ]);
+
+  expect(await within(dialog).findByText("형식 맞추기 필요 · NET-011 정적 라우팅")).toBeTruthy();
+  expect(within(dialog).getByText("모르는 frontmatter 키를 버렸습니다: aliases")).toBeTruthy();
+  expect(count(calls, "POST /concepts/files?dry_run=true")).toBe(0); // 맞추기 전에는 검사하지 않는다
+
+  await user.click(within(dialog).getByRole("button", { name: "형식 맞추기 (AI 1번)" }));
+  expect(await within(dialog).findByText(/통과 · NET-011 정적 라우팅/)).toBeTruthy();
+  expect(within(dialog).getByText("AI로 맞춤")).toBeTruthy();
+  expect(within(dialog).getByText("선수 개념 NET-999는 없어서 뺐습니다")).toBeTruthy();
+
+  const convert = calls.find((c) => c.route === "POST /concepts/normalize/convert")?.body;
+  expect(convert).toEqual({
+    file: { name: "routing.md", content: NOTE },
+    concept_id: "NET-011",
+    batch: [{ concept_id: "NET-020", title: "OSPF" }], // 함께 올린 다른 파일
+  });
+  const check = calls.find((c) => c.route === "POST /concepts/files?dry_run=true")?.body;
+  expect(check.files).toEqual([{ name: "routing.md", content: CONVERTED }, { name: "ospf.md", content: OSPF }]);
+
+  const save = within(dialog).getByRole("button", { name: "2개 저장" }) as HTMLButtonElement;
+  await waitFor(() => expect(save.disabled).toBe(false));
+  await user.click(save);
+  expect(await screen.findByText("개념 2개를 추가했습니다")).toBeTruthy();
+});
+
+test("AI 변환이 실패하면 멈추고, 다시 누르면 남은 파일부터 한다", async () => {
+  let fail = true;
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/folders": () => [200, [""]],
+    "POST /concepts/normalize/plan": (body) => [200, {
+      files: body.files.map((f: { name: string }, i: number) =>
+        plan(f.name, "convert", { concept_id: `NET-01${i + 1}`, title: f.name })),
+    }],
+    "POST /concepts/normalize/convert": (body) => {
+      if (fail) return [502, { detail: "Gemini 모델에 요청이 몰려 지금은 응답하지 못합니다." }];
+      return [200, { name: body.file.name, concept_id: body.concept_id, title: body.file.name, content: `---\nid: ${body.concept_id}\n---\n본문\n`, warnings: [] }];
+    },
+    "POST /concepts/files?dry_run=true": (body) =>
+      [200, { saved: false, files: body.files.map((f: { name: string }) => passed(f.name, "NET-011", f.name)), sync: null }],
+  });
+  const { user, dialog } = await openDialog();
+  await user.upload(within(dialog).getByLabelText(/끌어다 놓거나/), [
+    new File(["# 가\n본문"], "a.md", { type: "text/markdown" }),
+    new File(["# 나\n본문"], "b.md", { type: "text/markdown" }),
+  ]);
+  await user.click(await within(dialog).findByRole("button", { name: "형식 맞추기 (AI 2번)" }));
+
+  expect(await within(dialog).findByText(/형식을 맞추지 못했습니다: Gemini 모델에 요청이 몰려/)).toBeTruthy();
+  expect(count(calls, "POST /concepts/normalize/convert")).toBe(1); // 두 번째 파일은 부르지 않았다
+
+  fail = false;
+  await user.click(within(dialog).getByRole("button", { name: "형식 맞추기 (AI 2번)" }));
+  expect(await within(dialog).findAllByText("AI로 맞춤")).toHaveLength(2);
+  expect(count(calls, "POST /concepts/normalize/convert")).toBe(3);
+  expect(await within(dialog).findByRole("button", { name: "2개 저장" })).toBeTruthy();
+});
+
+test("Notion 페이지 주소로 하위 페이지를 골라 가져온다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/folders": () => [200, [""]],
+    "GET /notion/pages?parent=https%3A%2F%2Fwww.notion.so%2Fnet-abc": () => [200, {
+      parent: { page_id: "p0", title: "🌐 네트워크" },
+      pages: [{ page_id: "p1", title: "정적 라우팅" }, { page_id: "p2", title: "OSI 7계층" }, { page_id: "p3", title: "비공개" }],
+    }],
+    "POST /notion/files": (body) => [200, {
+      files: body.page_ids.map((id: string) => id === "p1"
+        ? { page_id: id, title: "정적 라우팅", name: "정적-라우팅.md", content: "# 정적 라우팅\n\n본문", warnings: ["Notion이 페이지를 끝까지 돌려주지 못했습니다"], error: null }
+        : { page_id: id, title: "", name: "", content: null, warnings: [], error: "페이지를 찾을 수 없습니다" }),
+    }],
+    "POST /concepts/normalize/plan": (body) => [200, {
+      files: body.files.map((f: { name: string }) => plan(f.name, "convert", { concept_id: "NET-011", title: "정적 라우팅" })),
+    }],
+  });
+  const { user, dialog } = await openDialog();
+  await user.click(within(dialog).getByRole("tab", { name: "Notion에서 가져오기" }));
+  await user.type(within(dialog).getByLabelText("Notion 페이지 주소"), "https://www.notion.so/net-abc");
+  await user.click(within(dialog).getByRole("button", { name: "불러오기" }));
+
+  await user.click(await within(dialog).findByRole("checkbox", { name: "OSI 7계층" })); // 3개 중 하나를 뺀다
+  await user.click(within(dialog).getByRole("button", { name: "2개 가져오기" }));
+
+  expect(await within(dialog).findByText("가져오지 못한 페이지 1개")).toBeTruthy();
+  expect(within(dialog).getByText("페이지를 찾을 수 없습니다")).toBeTruthy();
+  expect(await within(dialog).findByText("형식 맞추기 필요 · NET-011 정적 라우팅")).toBeTruthy();
+  expect(within(dialog).getByText("Notion이 페이지를 끝까지 돌려주지 못했습니다")).toBeTruthy();
+  expect(within(dialog).queryByRole("list", { name: "Notion 페이지" })).toBeNull(); // 가져온 뒤 목록을 닫는다
+  expect(calls.find((c) => c.route === "POST /notion/files")?.body).toEqual({ page_ids: ["p1", "p3"] });
+  expect(calls.find((c) => c.route === "POST /concepts/normalize/plan")?.body).toEqual({
+    files: [{ name: "정적-라우팅.md", content: "# 정적 라우팅\n\n본문" }],
+  });
+});
+
+test("하위 페이지가 없으면 그 페이지를 가져오고, Notion 오류는 그대로 보여 준다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/folders": () => [200, [""]],
+    "GET /notion/pages?parent=leaf": () => [200, { parent: { page_id: "p9", title: "정적 라우팅" }, pages: [] }],
+    "GET /notion/pages?parent=nope": () => [503, { detail: "NOTION_TOKEN이 설정되지 않았습니다" }],
+  });
+  const { user, dialog } = await openDialog();
+  await user.click(within(dialog).getByRole("tab", { name: "Notion에서 가져오기" }));
+  const address = within(dialog).getByLabelText("Notion 페이지 주소");
+
+  await user.type(address, "nope");
+  await user.click(within(dialog).getByRole("button", { name: "불러오기" }));
+  expect(await within(dialog).findByText("NOTION_TOKEN이 설정되지 않았습니다")).toBeTruthy();
+
+  await user.clear(address);
+  await user.type(address, "leaf");
+  await user.click(within(dialog).getByRole("button", { name: "불러오기" }));
+  const box = (await within(dialog).findByRole("checkbox", { name: "정적 라우팅" })) as HTMLButtonElement;
+  expect(box.getAttribute("data-state")).toBe("checked");
+  expect(within(dialog).getByRole("button", { name: "1개 가져오기" })).toBeTruthy();
 });

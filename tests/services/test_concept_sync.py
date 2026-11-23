@@ -82,6 +82,26 @@ def test_id_owned_by_other_source_is_conflict():
     assert "notion" in p.errors[0].message
 
 
+def test_archived_concept_of_other_source_is_taken_over():
+    other = stored(concept(), archived=True, source_type="notion")
+    p = plan([concept()], [other])
+    assert ids(p.taken_over) == ["NET-001"]
+    assert p.errors == [] and p.created == [] and p.restored == []
+    assert p.has_changes and p.summary()["taken_over"] == 1
+
+
+def test_taken_over_concept_counts_as_known_for_refs():
+    other = stored(concept("NET-002"), archived=True, source_type="notion")
+    p = plan([concept("NET-002"), concept(prerequisites=("NET-002",))], [other])
+    assert p.dangling_refs == []
+
+
+def test_fetch_warnings_are_passed_through():
+    warning = SourceError("page-1", "Notion이 내보내지 못한 블록 1개를 뺐습니다")
+    p = plan_sync("notion", FetchResult([concept()], [], [warning]), [])
+    assert p.warnings == [warning] and p.summary()["warnings"] == 1
+
+
 def test_other_source_concepts_are_never_archived():
     p = plan([], [stored(concept(), source_type="notion")])
     assert p.archived == []

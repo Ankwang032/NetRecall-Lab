@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -164,3 +166,44 @@ def test_notion_from_env(monkeypatch):
     client = notion_from_env()
     assert isinstance(client, NotionClient)
     client.close()
+
+
+DATABASE = "41fd0d99-b2e0-81ce-b08c-ff964280e202"
+SOURCE = "41fd0d99-b2e0-811b-bda4-000b8cceb9d2"
+
+
+def page_row(id_, trashed=False):
+    return {"object": "page", "id": id_, "in_trash": trashed, "properties": {}}
+
+
+def test_database_rows_queries_the_data_source_in_created_order():
+    fake = Fake(
+        respond(body={"object": "database", "data_sources": [{"id": SOURCE, "name": "개념"}]}),
+        respond(body={"results": [page_row("r1"), page_row("r2", trashed=True)], "has_more": True, "next_cursor": "c2"}),
+        respond(body={"results": [page_row("r3"), {"object": "data_source", "id": "x"}], "has_more": False}),
+    )
+    rows = fake.client().database_rows(f"https://app.notion.com/p/{DATABASE.replace('-', '')}?v=abc")
+
+    assert [r["id"] for r in rows] == ["r1", "r3"]  # 휴지통 행과 페이지가 아닌 결과는 뺀다
+    get, first, second = fake.requests
+    assert (get.method, get.url.path) == ("GET", f"/v1/databases/{DATABASE}")
+    assert (first.method, first.url.path) == ("POST", f"/v1/data_sources/{SOURCE}/query")
+    body = json.loads(first.content)
+    assert body == {"page_size": 100, "sorts": [{"timestamp": "created_time", "direction": "ascending"}]}
+    assert json.loads(second.content)["start_cursor"] == "c2"
+
+
+def test_database_with_several_data_sources_is_rejected():
+    fake = Fake(respond(body={"data_sources": [{"id": "a"}, {"id": "b"}]}))
+    with pytest.raises(NotionError, match="여러 개"):
+        fake.client().database_rows(DATABASE)
+
+
+def test_query_is_read_only_so_server_errors_are_retried():
+    fake = Fake(
+        respond(body={"data_sources": [{"id": SOURCE}]}),
+        respond(502),
+        respond(body={"results": [page_row("r1")], "has_more": False}),
+    )
+    assert [r["id"] for r in fake.client().database_rows(DATABASE)] == ["r1"]
+    assert fake.sleeps == [1.0]

@@ -10,6 +10,7 @@
 - 원본에서 사라진 개념은 삭제하지 않고 archive한다. 복습 이력을 보존하기 위해서다.
 - 읽기에 실패한 파일에 있던 개념은 archive하지 않는다. 오타 하나로 이력이 사라지면 안 된다.
 - 다른 소스(Notion 등)가 이미 쓰고 있는 id는 덮어쓰지 않고 충돌로 보고한다.
+  그 개념이 다른 소스에서 보관된 상태면 넘겨받는다(taken_over). 노트를 다른 소스로 옮겨도 복습 이력이 이어진다.
 - 질문이 MIN_QUESTIONS개보다 적은 개념은 오류로 보고한다. 소스와 무관한 규칙이라 여기서 검사한다.
   이미 저장된 개념이면 읽기 오류처럼 기존 상태를 유지한다.
 """
@@ -39,16 +40,18 @@ class SyncPlan:
     updated: list[RawConcept] = field(default_factory=list)
     relocated: list[RawConcept] = field(default_factory=list)
     restored: list[RawConcept] = field(default_factory=list)
+    taken_over: list[RawConcept] = field(default_factory=list)  # 다른 소스에서 보관된 개념을 넘겨받음
     archived: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
     kept_due_to_error: list[str] = field(default_factory=list)
     errors: list[SourceError] = field(default_factory=list)
+    warnings: list[SourceError] = field(default_factory=list)  # 반영은 하되 알릴 것 (소스가 보고)
     dangling_refs: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:
         return bool(self.created or self.updated or self.relocated
-                    or self.restored or self.archived)
+                    or self.restored or self.taken_over or self.archived)
 
     def summary(self) -> dict[str, int]:
         return {
@@ -56,10 +59,12 @@ class SyncPlan:
             "updated": len(self.updated),
             "relocated": len(self.relocated),
             "restored": len(self.restored),
+            "taken_over": len(self.taken_over),
             "archived": len(self.archived),
             "unchanged": len(self.unchanged),
             "kept_due_to_error": len(self.kept_due_to_error),
             "errors": len(self.errors),
+            "warnings": len(self.warnings),
             "dangling_refs": len(self.dangling_refs),
         }
 
@@ -69,7 +74,7 @@ def plan_sync(
     fetched: FetchResult,
     existing: list[ExistingConcept],
 ) -> SyncPlan:
-    plan = SyncPlan(source_type=source_type, errors=list(fetched.errors))
+    plan = SyncPlan(source_type=source_type, errors=list(fetched.errors), warnings=list(fetched.warnings))
     by_id = {e.concept_id: e for e in existing}
     failed_refs = {err.source_ref for err in fetched.errors}
     invalid_ids: set[str] = set()
@@ -86,7 +91,7 @@ def plan_sync(
             invalid_ids.add(concept.concept_id)
             continue
 
-        if current and current.source_type != source_type:
+        if current and current.source_type != source_type and not current.archived:
             plan.errors.append(SourceError(
                 concept.source_ref,
                 f"id '{concept.concept_id}'는 이미 {current.source_type} 소스에서 사용 중입니다",
@@ -97,6 +102,8 @@ def plan_sync(
 
         if current is None:
             plan.created.append(concept)
+        elif current.source_type != source_type:
+            plan.taken_over.append(concept)
         elif current.archived:
             plan.restored.append(concept)
         elif current.content_hash != concept.content_hash:

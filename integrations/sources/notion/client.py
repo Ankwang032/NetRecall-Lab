@@ -5,10 +5,12 @@
 - GET /v1/pages/{id}: 페이지 제목
 - GET /v1/pages/{id}/markdown?markdown_version=v2: 페이지 내용 (Notion-flavored Markdown).
   다음 API 버전에서 기본 형식이 v2로 바뀐다고 예고되어 있어 v2를 고정한다.
+- GET /v1/databases/{id} → POST /v1/data_sources/{id}/query: 데이터베이스 행 (동기화 소스용).
+  query는 POST지만 읽기만 하므로 GET처럼 5xx에서 다시 보낸다.
 
 재시도 (Notion 요청 한도 문서 기준)
 - 429·529: Retry-After 초만큼(최대 60초) 기다렸다가 다시 보낸다. 차단(public_api_request_blocked)이면 보내지 않는다.
-- 500·502·503·504와 연결 오류: GET만 잠깐 기다렸다가 다시 보낸다.
+- 500·502·503·504와 연결 오류: 읽기 요청(GET, query)만 잠깐 기다렸다가 다시 보낸다.
 오류는 모두 NotionError로 바꾸고, 화면에 그대로 보여 줄 수 있는 짧은 문구를 담는다.
 """
 from __future__ import annotations
@@ -114,16 +116,43 @@ class NotionClient:
             unknown_block_ids=tuple(data.get("unknown_block_ids", [])),
         )
 
+    def database_rows(self, database: str) -> list[dict[str, Any]]:
+        """데이터베이스의 행(페이지 객체)을 만든 순서대로. 휴지통에 있는 행은 뺀다.
+
+        2025-09-03 API부터 데이터베이스는 데이터 소스를 여러 개 가질 수 있다. 하나인 것만 받는다.
+        """
+        data = self._request("GET", f"/databases/{page_id_from(database)}")
+        sources = data.get("data_sources", [])
+        if len(sources) != 1:
+            raise NotionError(
+                "데이터 소스가 여러 개인 데이터베이스는 동기화할 수 없습니다" if sources
+                else "데이터베이스에 데이터 소스가 없습니다"
+            )
+        rows: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            body: dict[str, Any] = {
+                "page_size": 100, "sorts": [{"timestamp": "created_time", "direction": "ascending"}],
+            }
+            if cursor:
+                body["start_cursor"] = cursor
+            data = self._request("POST", f"/data_sources/{sources[0]['id']}/query", json=body, read_only=True)
+            rows += [r for r in data.get("results", []) if r.get("object") == "page" and not r.get("in_trash")]
+            cursor = data.get("next_cursor")
+            if not data.get("has_more") or not cursor:
+                return rows
+
     def close(self) -> None:
         self._http.close()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+    def _request(self, method: str, path: str, *, read_only: bool = False, **kwargs: Any) -> dict[str, Any]:
+        read_only = read_only or method == "GET"
         for attempt in range(MAX_RETRIES + 1):
             last = attempt == MAX_RETRIES
             try:
                 response = self._http.request(method, path, **kwargs)
             except httpx.HTTPError as exc:
-                if method == "GET" and not last:
+                if read_only and not last:
                     self._sleep(2 ** attempt)
                     continue
                 raise NotionError("Notion에 연결하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.") from exc
@@ -133,7 +162,7 @@ class NotionClient:
                     return response.json()
                 except ValueError as exc:
                     raise NotionError("Notion 응답을 읽지 못했습니다.", response.status_code) from exc
-            wait = None if last else _retry_wait(method, response, attempt)
+            wait = None if last else _retry_wait(read_only, response, attempt)
             if wait is None:
                 raise _error(response)
             self._sleep(wait)
@@ -154,7 +183,7 @@ def _body(response: httpx.Response) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
-def _retry_wait(method: str, response: httpx.Response, attempt: int) -> float | None:
+def _retry_wait(read_only: bool, response: httpx.Response, attempt: int) -> float | None:
     status = response.status_code
     if status in RETRY_STATUSES:
         reason = (_body(response).get("additional_data") or {}).get("rate_limit_reason")
@@ -165,7 +194,7 @@ def _retry_wait(method: str, response: httpx.Response, attempt: int) -> float | 
         except ValueError:
             seconds = 1
         return float(min(max(seconds, 0), MAX_RETRY_AFTER))
-    if status in GET_RETRY_STATUSES and method == "GET":
+    if status in GET_RETRY_STATUSES and read_only:
         return float(2 ** attempt)
     return None
 
