@@ -36,9 +36,10 @@ def create_app(
 
     app = FastAPI(title="NetRecall Lab")
     app.state.session_factory = make_session_factory(engine)
+    # .env 파일은 셸이 아니라 ~를 풀지 않으므로 여기서 홈 폴더로 바꾼다
     app.state.concepts_dir = Path(
         concepts_dir or os.environ.get("NETRECALL_CONCEPTS_DIR", DEFAULT_CONCEPTS_DIR)
-    )
+    ).expanduser()
     # GEMINI_API_KEY가 없으면 None: AI 기능만 503이고 나머지는 동작한다
     app.state.llm = llm or gemini_from_env()
     # NOTION_TOKEN이 없으면 None: Notion 가져오기 API만 503이다

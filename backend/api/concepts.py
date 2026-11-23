@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -163,7 +164,7 @@ def sync_notion(request: Request, session: SessionDep, notion: NotionDep, dry_ru
 @router.get("/concepts/folders")
 def folders(request: Request) -> list[str]:
     """개념 파일을 올릴 수 있는 폴더 ("" = 개념 폴더 자체)."""
-    return list_folders(request.app.state.concepts_dir.resolve())
+    return list_folders(_concepts_root(request))
 
 
 @router.post("/concepts/files")
@@ -174,7 +175,7 @@ def upload_files(
 
     하나라도 실패하면 아무것도 저장하지 않는다 (saved=false, 파일별 errors 확인).
     """
-    root = request.app.state.concepts_dir.resolve()
+    root = _concepts_root(request)
     files = [NewFile(f.name, f.content) for f in body.files]
     try:
         if dry_run:
@@ -193,7 +194,7 @@ def upload_files(
 @router.post("/concepts/normalize/plan")
 def normalize_plan(body: NormalizePlanRequest, request: Request, session: SessionDep) -> NormalizePlanResponse:
     """형식이 다른 .md를 표준 형식으로 맞추기 1단계. AI 없이 파일별 처리 방법과 id를 정한다. 저장하지 않는다."""
-    root = request.app.state.concepts_dir.resolve()
+    root = _concepts_root(request)
     try:
         planned = plan_files(session, root, [NewFile(f.name, f.content) for f in body.files], body.prefix)
     except ValueError as exc:
@@ -207,7 +208,7 @@ def normalize_convert(body: ConvertRequest, request: Request, session: SessionDe
 
     AI가 실패하면 502, LLM이 설정되지 않았으면 503.
     """
-    root = request.app.state.concepts_dir.resolve()
+    root = _concepts_root(request)
     batch = [KnownConcept(b.concept_id, b.title) for b in body.batch]
     try:
         converted = convert_file(
@@ -241,6 +242,14 @@ def get_concept(concept_id: str, session: SessionDep) -> ConceptDetail:
         content=concept.content,
         questions=concept.seed_questions,
     )
+
+
+def _concepts_root(request: Request) -> Path:
+    """개념 폴더. 없으면 500과 함께 경로를 알려 준다 (동기화의 "개념 폴더가 없습니다"와 같은 문구)."""
+    root = request.app.state.concepts_dir.resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=500, detail=f"개념 폴더가 없습니다: {root}")
+    return root
 
 
 def _sync_response(plan: SyncPlan, dry_run: bool) -> SyncResponse:

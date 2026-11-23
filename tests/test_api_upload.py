@@ -60,3 +60,28 @@ def test_unknown_folder_is_422(setup, folder):
 def test_concept_detail_route_still_works(setup):
     client, _ = setup
     assert client.get("/concepts/NET-010").json()["title"] == "Static Routing"
+
+
+def test_missing_concepts_folder_is_reported_with_path(tmp_path):
+    """개념 폴더가 없으면 폴더를 쓰는 API가 모두 같은 문구로 알린다 (화면에 '요청 실패 (500)'만 나오지 않게)."""
+    missing = tmp_path / "없는-폴더"
+    client = TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}", missing))
+    file = {"name": "ospf.md", "content": OSPF}
+    responses = [
+        client.get("/concepts/folders"),
+        client.post("/concepts/files", params={"dry_run": True}, json={"folder": "", "files": [file]}),
+        client.post("/concepts/normalize/plan", json={"files": [file]}),
+        client.post("/sync/markdown"),
+    ]
+    for res in responses:
+        assert res.status_code == 500
+        assert res.json()["detail"] == f"개념 폴더가 없습니다: {missing}"
+
+
+def test_concepts_folder_from_env_expands_home(tmp_path, monkeypatch):
+    """.env 파일은 ~를 풀지 않으므로 앱이 홈 폴더로 바꾼다."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("NETRECALL_CONCEPTS_DIR", "~/notes")
+    shutil.copytree(SAMPLES, tmp_path / "notes")
+    client = TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}"))
+    assert client.post("/sync/markdown").json()["summary"]["created"] == 3
