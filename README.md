@@ -53,5 +53,4 @@ alembic revision --autogenerate -m "설명"
 ## 문서
 
 - Markdown 개념 형식: [docs/markdown-concept-format.md](docs/markdown-concept-format.md)
-- 설계서: [NetRecall_Lab_SDD_v1.1.md](NetRecall_Lab_SDD_v1.1.md)
 - 설계서와 다른 점: [develop-memo.md](develop-memo.md)
