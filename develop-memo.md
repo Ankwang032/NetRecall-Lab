@@ -370,7 +370,7 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 2. Phase 5 실습 수직 슬라이스 (설계서 v1.3 §4.1, §7.1.1)
 3. ~~별도 개념 폴더(D20)는 나중에~~ → 같은 날 사용자가 `.env`에 `NETRECALL_CONCEPTS_DIR=~/netrecall-concepts`를 넣었다. 폴더가 없고 `~`도 풀리지 않아 형식 맞추기 계획·동기화가 500이었다(계획 API는 이유도 돌려주지 않았다). 앱이 `~`를 홈 폴더로 바꾸고(`create_app`), 개념 폴더를 쓰는 API가 모두 "개념 폴더가 없습니다: 경로"를 돌려주게 고쳤다(+2 테스트, 전체 340개). 폴더를 만들고 샘플 3개를 `network/` 그대로 복사해 동기화 미리보기에서 "변경 없음 3"을 확인했다 (상대 경로가 같아 보관되지 않는다)
 
-### 2026-11-24 — Phase 5 시작: 환경 준비, 시나리오 형식, 검사 의미 (0~2단계)
+### 2026-11-24 — Phase 5 시작: 환경 준비, 시나리오 형식, 검사 의미, Containerlab 실행기 (0~3단계)
 
 사용자 요청: Phase 5 계획(0 환경 준비 → 1 시나리오 형식 → 2 검사 의미 → 3 ContainerlabRuntime → 4 실행 기록·CLI·API → 5 기준 풀이 CI → 6 LAB-002 → 7 실습 화면)을 추천대로 진행한다. 0~2단계를 한 뒤 멈추고 확인받는다. 브랜치 `feat/lab-runtime`(`feat/concept-normalize`에서 분기). CI에는 기존 단위 테스트도 같이 돌린다. 같은 날 Notion 규칙 페이지의 머리 콜아웃("2·5절 미구현")과 본문을 저장소 문서에 맞췄다.
 
@@ -382,17 +382,21 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 | 시나리오 형식 | `backend/services/lab_scenario.py` — 읽기·검증, 대역 무작위 선택(겹치지 않게), 주소 식 `<대역>.host(n)`, 렌더링(`RenderedLab`). `lab_scenarios/LAB-001/scenario.yaml`. 문서 `docs/lab-scenario-format.md` (D31, D34) | 완료 |
 | 토폴로지·정적 검사 | `integrations/labs/containerlab/topology.py` — 노드 종류별 이미지·자원 제한, `network-mode: none`, 노드 키 허용 목록 검사 (D34) | 완료 |
 | 검사 의미 | `integrations/labs/base.py` `LabRuntime`·`ExecResult`, `backend/services/lab_checks.py` — 상태 수집, `ping`·`route`·`address`, 주소 유일성 자동 검사 (D32, D33) | 완료 |
+| Containerlab 실행기 | `integrations/labs/containerlab/runtime.py` `ContainerlabRuntime` — 배포(정적 검사 → `deploy -t`, 라우터 `vtysh.conf`·FRR 준비 대기, 실패하면 정리), `docker exec` 명령 실행(시간 제한 15초), 정리(`destroy --name --cleanup`, 여러 번 불러도 됨), 남은 실습 목록(라벨) (D36~D38) | 완료 |
+| preset | `backend/services/lab_preset.py` — 주소 넣기 고정 명령. 라우터는 vtysh, Linux 노드는 `ip addr add` (D39) | 완료 |
+| 테스트 구분 | `lab` 마커. 기본 `pytest`는 빼고(`addopts`), `pytest -m lab`으로만 실제 배포 테스트를 돌린다 (D40) | 완료 |
 
 검증
 
+- (3단계 뒤) Python 테스트 444개 통과 (+18: `test_clab_runtime.py` 15, `test_lab_preset.py` 3), 실제 배포 테스트 `pytest -m lab` 3개 통과(15.5초): LAB-001 배포 → 설정 전 실패 → 첫·마지막 주소 → 통과 → 없는 노드·시간 초과 오류 → 정리, 라우터 준비·preset이 running-config에 보임·검사 통과, 없는 이미지로 배포 실패 시 남는 것 없음. 정리 후 컨테이너·`/etc/hosts`·SSH 설정 항목 없음
 - Python 테스트 426개 통과 (+86): `tests/labs/test_lab_scenario.py` 47(형식 오류 35가지, 프리픽스 범위 전체에서 주소 겹침, 대역 겹치지 않음), `test_clab_topology.py` 17(정적 검사가 마운트·exec·관리망·다른 이미지·노드 7개를 거부), `test_lab_checks.py` 22(녹화한 실제 출력으로 정답·오답·실행 실패)
 - 렌더링한 LAB-001 토폴로지를 실제로 배포: 메모리 64MB, CPU quota 50000/100000, `network-mode: none` 적용 확인
 - 실제 LAB-001(무작위 대역 `10.8.197.112/29`)에 검사기를 임시 `docker exec` 어댑터로 돌림: 설정 전 실패, 정답 통과, "pc1 `lo`에 pc2 주소"는 주소 유일성에서 실패, "프리픽스 /16"은 address 검사에서 실패(ping은 통과). 정리 후 컨테이너·링크·`/etc/hosts` 항목 없음
 
 다음 작업
 
-1. 사용자 확인 후 3단계: `ContainerlabRuntime`(배포·`docker exec`·정리·남은 실습 목록, 라우터 `vtysh.conf`, preset 주소), `pytest -m lab`
-2. 4단계: `lab_runs`·`lab_attempts`·`lab_results`, 실행 상태, CLI·API, 사용자가 LAB-001 직접 풀기
+1. 4단계: `lab_runs`·`lab_attempts`·`lab_results`, 실행 상태, CLI·API, 재현성 기록(이미지 digest·Containerlab 버전), 사용자가 LAB-001 직접 풀기
+2. 5단계: 기준 풀이·오답(`tests/labs/solutions/`)과 GitHub Actions
 
 ## 1. 결정 사항 (2026-11-12)
 
@@ -472,6 +476,11 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 | D33 | §D-5 ping "3번 보내 1번 이상 응답, 한 번에 1초, 전체 5초" | `ping -n -c 3 -W 1`, 판정은 종료 코드가 아니라 출력의 "N received"(iputils)·"N packets received"(busybox). 전체 시간 제한은 실행기의 명령 시간 제한으로 둔다(3단계) | iputils에 `-w`를 주면 3번 중 1번만 응답해도 종료 코드 1이다. FRR 이미지의 ping은 busybox라 출력과 `-W` 뜻이 다르다. 두 형식 모두 3초 안팎에 끝난다 |
 | D34 | §D-4 정적 검사 (값 미정) | 자원 제한: host CPU 0.5·메모리 64MB, router CPU 1·메모리 256MB. 시간 제한 1~120분(기본 60). `pool`은 사설 대역 안. 노드 항목은 `kind`만, 렌더링한 토폴로지의 노드 키는 허용 목록 | 시나리오가 이미지·마운트·명령을 고를 자리를 없앤다 |
 | D35 | §D-5 상태 수집 "FRRouting 노드는 실행 중인 설정과 라우팅 테이블" | 라우터도 `ip -j addr show`를 같이 모은다 | `ip addr add`로 넣은 주소는 running-config에 나오지 않는다(녹화 확인). 주소 유일성 검사에 모든 노드의 주소가 필요하다 |
+| D36 | §D-7 "실행기는 고정된 인자로 `containerlab`만 호출" | 배포·정리는 `containerlab`, 노드 명령 실행과 남은 실습 목록은 `docker exec`·`docker ps`로 한다 | `containerlab exec --cmd`는 명령을 문자열 하나로 받아 나눈다. `docker exec`는 argv를 그대로 받아 셸을 거치지 않는다. 학습자 접속에도 docker 그룹이 필요하다 |
+| D37 | (없음) | `docker exec`의 종료 코드만으로는 명령 실패와 docker 실패를 가를 수 없다(없는 컨테이너도 1). stderr가 `Error response from daemon:`·`OCI runtime exec failed`로 시작하면 실행 실패(`LabRuntimeError`)로 본다. 정리는 라벨로 남은 실습인지 먼저 보고, 없으면 containerlab을 부르지 않는다 | ping 응답 없음도 종료 코드 1이다. 없는 실습을 `destroy`하면 containerlab이 오류(1)를 낸다(확인함) |
+| D38 | §D-5 ping "전체 5초" | 노드 명령 시간 제한 15초. 라우터는 배포 직후 `touch /etc/frr/vtysh.conf`, `vtysh -c 'show ip route json'`이 JSON을 돌려줄 때까지 최대 30초 기다린다 | zebra가 뜨기 전에는 preset·검사의 vtysh가 실패한다 |
+| D39 | §D-4 preset "항목 종류마다 고정 명령" | `addresses`: 라우터는 `vtysh -c 'configure terminal' -c 'interface X' -c 'ip address A'`, Linux 노드는 `ip addr add A dev X` | 라우터에 `ip addr`로 넣으면 학습자가 보는 running-config에 나오지 않는다 |
+| D40 | §D-5 "검증기 테스트" | 실제 배포 테스트는 `lab` 마커. 기본 `pytest`에서 빼고 `pytest -m lab`으로만 돌린다. 준비(도구·그룹·이미지)가 안 됐으면 건너뛰지 않고 실패한다 | 평소 테스트가 Docker 없이 빨리 끝나게 한다. CI에서 조용히 건너뛰어 통과로 보이는 것을 막는다 |
 
 ## 2. 진행 현황 정정
 

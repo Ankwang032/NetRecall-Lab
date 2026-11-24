@@ -30,3 +30,5 @@ include = ["integrations*", "backend*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-m 'not lab'"  # 실제 실습 테스트는 pytest -m lab 으로만 돈다
+markers = ["lab: 실제 Containerlab·Docker로 배포하는 테스트 (clab_admins·docker 그룹 필요)"]
