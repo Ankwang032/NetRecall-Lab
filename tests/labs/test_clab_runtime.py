@@ -1,5 +1,6 @@
 """ContainerlabRuntime 단위 테스트. subprocess를 가짜로 바꿔 Docker 없이 명령 인자와 오류 처리를 본다."""
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -7,8 +8,7 @@ import yaml
 
 from integrations.labs.base import Endpoint, ExecResult, LabRuntimeError, RenderedTopology, TopologyLink, TopologyNode
 from integrations.labs.containerlab import runtime as rt
-from integrations.labs.containerlab.runtime import ContainerlabRuntime
-from integrations.labs.containerlab.topology import TopologyError
+from integrations.labs.containerlab.runtime import ContainerlabRuntime, containerlab_from_env
 
 TOPOLOGY = RenderedTopology(
     (TopologyNode("pc1", "host"), TopologyNode("r1", "router")),
@@ -112,9 +112,23 @@ def test_failed_deploy_cleans_up_and_raises(monkeypatch, tmp_path):
 def test_static_check_failure_does_not_deploy(monkeypatch, tmp_path):
     fake = FakeProcesses(monkeypatch, [])
     many = RenderedTopology(tuple(TopologyNode(f"n{i}", "host") for i in range(7)), ())
-    with pytest.raises(TopologyError):
+    with pytest.raises(LabRuntimeError, match="배포 전 정적 검사에 실패했습니다: 노드는 1~6개"):
         ContainerlabRuntime(tmp_path).deploy("nr-5", many)
     assert fake.calls == []
+
+
+def test_describe_records_version_and_image_ids(monkeypatch):
+    FakeProcesses(monkeypatch, [
+        (["containerlab", "version"], (0, "\x1b[1m    version: 0.83.0\x1b[0m\n     commit: fb20edd45\n", "")),
+        (["docker", "image", "inspect", "--format", "{{.Id}}", "netrecall/lab-host:1"], (0, "sha256:aaa\n", "")),
+        (["docker", "image", "inspect"], (1, "", "Error response from daemon: No such image")),
+    ])
+    info = ContainerlabRuntime("/tmp/x").describe()
+    assert info.version == "containerlab 0.83.0"
+    assert info.images == {
+        "host": {"image": "netrecall/lab-host:1", "id": "sha256:aaa"},
+        "router": {"image": "quay.io/frrouting/frr:10.7.1", "id": None},
+    }
 
 
 def test_destroy_only_existing_runs(monkeypatch, tmp_path):
@@ -136,3 +150,14 @@ def test_missing_binaries_raise(monkeypatch):
     FakeProcesses(monkeypatch, [(["docker"], FileNotFoundError("docker"))])
     with pytest.raises(LabRuntimeError, match="docker를 실행하지 못했습니다"):
         ContainerlabRuntime("/tmp/x").list_runs()
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, "~/.netrecall/labs"), ("", "~/.netrecall/labs"), ("~/labs", "~/labs"), ("/tmp/labs", "/tmp/labs"),
+])
+def test_work_dir_from_env(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("NETRECALL_LAB_DIR", raising=False)
+    else:
+        monkeypatch.setenv("NETRECALL_LAB_DIR", value)
+    assert containerlab_from_env().work_dir == Path(expected).expanduser()

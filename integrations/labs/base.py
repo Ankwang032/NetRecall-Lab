@@ -46,6 +46,12 @@ class ExecResult:
     stderr: str
 
 
+@dataclass(frozen=True)
+class RuntimeInfo:
+    version: str                           # 예: containerlab 0.83.0
+    images: dict[str, dict[str, str | None]]  # 노드 종류 → {"image": 이름, "id": 이미지 id (없으면 None)}
+
+
 class LabRuntimeError(RuntimeError):
     """실행 환경을 쓰지 못함 (배포 실패, 노드 없음, 명령 시간 초과 등)."""
 
@@ -63,3 +69,5 @@ class LabRuntime(Protocol):
     def destroy(self, run_name: str) -> None: ...
 
     def list_runs(self) -> list[str]: ...  # 남은 실습 정리용
+
+    def describe(self) -> RuntimeInfo: ...  # 재현성 기록: 실행 환경 버전과 노드 종류별 이미지

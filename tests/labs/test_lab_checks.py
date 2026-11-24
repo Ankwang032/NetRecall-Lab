@@ -4,22 +4,15 @@
 FRRouting 10.7.1. LAB-001 모양은 10.37.84.64/27, LAB-002 모양은 lan1 10.1.1.0/24 · transit 172.16.0.0/30 ·
 lan2 10.2.2.0/24 (pc는 .10, 라우터는 .1·.2).
 """
-import json
 import random
-from pathlib import Path
 
 import pytest
 
-from backend.services.lab_checks import (
-    STATE_COMMANDS, UNIQUE_CHECK_ID, collect_state, ping_argv, route_argv, verify,
-)
+from backend.services.lab_checks import STATE_COMMANDS, UNIQUE_CHECK_ID, collect_state, ping_argv, route_argv, verify
 from backend.services.lab_scenario import parse_scenario, render
 from integrations.labs.base import ExecResult, LabRuntimeError
 from tests.fakes import FakeLabRuntime
-
-ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = Path(__file__).parent / "fixtures"
-ADDR = tuple(STATE_COMMANDS["host"]["addresses"])
+from tests.labs.lab_fixtures import ADDR, addr_json, fixed_lab_001_text, fixture
 
 BUSYBOX_PING_OK = """PING 10.1.1.10 (10.1.1.10): 56 data bytes
 64 bytes from 10.1.1.10: seq=0 ttl=64 time=0.100 ms
@@ -76,27 +69,12 @@ checks:
 """
 
 
-def fixture(name: str) -> str:
-    return (FIXTURES / name).read_text()
-
-
 def ok(stdout: str) -> ExecResult:
     return ExecResult(0, stdout, "")
 
 
-def addr_json(interfaces: dict[str, list[str]]) -> str:
-    """`ip -j addr show`와 같은 모양(검사가 읽는 키만)."""
-    return json.dumps([
-        {"ifname": name, "addr_info": [
-            {"family": "inet", "local": a.split("/")[0], "prefixlen": int(a.split("/")[1])} for a in addrs
-        ]} for name, addrs in interfaces.items()
-    ])
-
-
 def lab_001():
-    text = (ROOT / "lab_scenarios" / "LAB-001" / "scenario.yaml").read_text()
-    text = text.replace("{pool: 10.0.0.0/8, prefix: {min: 24, max: 30}}", "{pool: 10.37.84.64/27, prefix: 27}")
-    return render(parse_scenario(text.encode()), 1, random.Random(0))
+    return render(parse_scenario(fixed_lab_001_text().encode()), 1, random.Random(0))
 
 
 def lab_002():

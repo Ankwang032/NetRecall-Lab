@@ -370,7 +370,7 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 2. Phase 5 실습 수직 슬라이스 (설계서 v1.3 §4.1, §7.1.1)
 3. ~~별도 개념 폴더(D20)는 나중에~~ → 같은 날 사용자가 `.env`에 `NETRECALL_CONCEPTS_DIR=~/netrecall-concepts`를 넣었다. 폴더가 없고 `~`도 풀리지 않아 형식 맞추기 계획·동기화가 500이었다(계획 API는 이유도 돌려주지 않았다). 앱이 `~`를 홈 폴더로 바꾸고(`create_app`), 개념 폴더를 쓰는 API가 모두 "개념 폴더가 없습니다: 경로"를 돌려주게 고쳤다(+2 테스트, 전체 340개). 폴더를 만들고 샘플 3개를 `network/` 그대로 복사해 동기화 미리보기에서 "변경 없음 3"을 확인했다 (상대 경로가 같아 보관되지 않는다)
 
-### 2026-11-24 — Phase 5 시작: 환경 준비, 시나리오 형식, 검사 의미, Containerlab 실행기 (0~3단계)
+### 2026-11-24 — Phase 5: 환경 준비, 시나리오 형식, 검사 의미, Containerlab 실행기, 실행 기록·CLI·API (0~4단계)
 
 사용자 요청: Phase 5 계획(0 환경 준비 → 1 시나리오 형식 → 2 검사 의미 → 3 ContainerlabRuntime → 4 실행 기록·CLI·API → 5 기준 풀이 CI → 6 LAB-002 → 7 실습 화면)을 추천대로 진행한다. 0~2단계를 한 뒤 멈추고 확인받는다. 브랜치 `feat/lab-runtime`(`feat/concept-normalize`에서 분기). CI에는 기존 단위 테스트도 같이 돌린다. 같은 날 Notion 규칙 페이지의 머리 콜아웃("2·5절 미구현")과 본문을 저장소 문서에 맞췄다.
 
@@ -385,9 +385,17 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 | Containerlab 실행기 | `integrations/labs/containerlab/runtime.py` `ContainerlabRuntime` — 배포(정적 검사 → `deploy -t`, 라우터 `vtysh.conf`·FRR 준비 대기, 실패하면 정리), `docker exec` 명령 실행(시간 제한 15초), 정리(`destroy --name --cleanup`, 여러 번 불러도 됨), 남은 실습 목록(라벨) (D36~D38) | 완료 |
 | preset | `backend/services/lab_preset.py` — 주소 넣기 고정 명령. 라우터는 vtysh, Linux 노드는 `ip addr add` (D39) | 완료 |
 | 테스트 구분 | `lab` 마커. 기본 `pytest`는 빼고(`addopts`), `pytest -m lab`으로만 실제 배포 테스트를 돌린다 (D40) | 완료 |
+| 실행 기록 | `backend/models/lab.py` `LabRun`·`LabAttempt`·`LabResult`, 마이그레이션 `0005` (D45) | 완료 |
+| 실행 흐름 | `backend/services/lab_service.py` — 시작(실행 기록 커밋 → 재현성 기록 → 배포 → preset), 검증, 끝내기(마지막 상태 수집 → 정리), 시간 제한, 앱 시작 때 남은 실습 정리, 목표 주소 가리기 (D41~D44) | 완료 |
+| API | `backend/api/labs.py` — `GET /labs`, `POST /labs/{id}/runs`, `GET /lab-runs/current`·`/{id}`, `POST /lab-runs/{id}/attempts`·`/finish`. `create_app(lab_runtime=, scenarios_dir=)`, 앱 시작 때 정리(lifespan) | 완료 |
+| CLI | `backend/cli.py` — `python -m backend.cli [--env-file] lab list/start/status/verify/finish` (D46) | 완료 |
+| 문서 | README "실습" 절(준비·CLI·API), `.env.example`에 `NETRECALL_LAB_DIR` | 완료 |
 
 검증
 
+- (4단계 뒤) Python 테스트 477개 통과 (+33: `test_lab_service.py` 17, `test_api_labs.py` 8, `test_cli.py` 3, 런타임 5). `pytest -m lab` 3개 통과. 마이그레이션이 모델과 같다(`test_migrations_match_models`)
+- 실제 Containerlab + 임시 DB로 CLI: `lab start LAB-001`(대역 `10.231.184.0/24`) → 설정 전 검증 실패(목표 주소는 `[pc1:eth1 목표 주소]`로 가려짐) → `docker exec`로 pc2를 /16으로 넣음 → address 검사만 실패(ping 통과) → /24로 고침 → 통과(종료 코드 0) → `lab finish` → `passed`, 남은 컨테이너 없음. DB에 Containerlab 버전·host 이미지 id·시도 3번·마지막 상태 수집(final)이 남음
+- 실제 런타임으로 API(앱 시작 절차 포함): 시작 → 현재 실습 → 검증 → 두 번째 시작 409 → 끝내기 `abandoned`
 - (3단계 뒤) Python 테스트 444개 통과 (+18: `test_clab_runtime.py` 15, `test_lab_preset.py` 3), 실제 배포 테스트 `pytest -m lab` 3개 통과(15.5초): LAB-001 배포 → 설정 전 실패 → 첫·마지막 주소 → 통과 → 없는 노드·시간 초과 오류 → 정리, 라우터 준비·preset이 running-config에 보임·검사 통과, 없는 이미지로 배포 실패 시 남는 것 없음. 정리 후 컨테이너·`/etc/hosts`·SSH 설정 항목 없음
 - Python 테스트 426개 통과 (+86): `tests/labs/test_lab_scenario.py` 47(형식 오류 35가지, 프리픽스 범위 전체에서 주소 겹침, 대역 겹치지 않음), `test_clab_topology.py` 17(정적 검사가 마운트·exec·관리망·다른 이미지·노드 7개를 거부), `test_lab_checks.py` 22(녹화한 실제 출력으로 정답·오답·실행 실패)
 - 렌더링한 LAB-001 토폴로지를 실제로 배포: 메모리 64MB, CPU quota 50000/100000, `network-mode: none` 적용 확인
@@ -395,8 +403,8 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 
 다음 작업
 
-1. 4단계: `lab_runs`·`lab_attempts`·`lab_results`, 실행 상태, CLI·API, 재현성 기록(이미지 digest·Containerlab 버전), 사용자가 LAB-001 직접 풀기
-2. 5단계: 기준 풀이·오답(`tests/labs/solutions/`)과 GitHub Actions
+1. 사용자가 LAB-001을 직접 풀어 본다 (README "실습")
+2. 5단계: 기준 풀이·오답(`tests/labs/solutions/`)과 GitHub Actions (단위 테스트 포함)
 
 ## 1. 결정 사항 (2026-11-12)
 
@@ -481,6 +489,12 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 | D38 | §D-5 ping "전체 5초" | 노드 명령 시간 제한 15초. 라우터는 배포 직후 `touch /etc/frr/vtysh.conf`, `vtysh -c 'show ip route json'`이 JSON을 돌려줄 때까지 최대 30초 기다린다 | zebra가 뜨기 전에는 preset·검사의 vtysh가 실패한다 |
 | D39 | §D-4 preset "항목 종류마다 고정 명령" | `addresses`: 라우터는 `vtysh -c 'configure terminal' -c 'interface X' -c 'ip address A'`, Linux 노드는 `ip addr add A dev X` | 라우터에 `ip addr`로 넣으면 학습자가 보는 running-config에 나오지 않는다 |
 | D40 | §D-5 "검증기 테스트" | 실제 배포 테스트는 `lab` 마커. 기본 `pytest`에서 빼고 `pytest -m lab`으로만 돌린다. 준비(도구·그룹·이미지)가 안 됐으면 건너뛰지 않고 실패한다 | 평소 테스트가 Docker 없이 빨리 끝나게 한다. CI에서 조용히 건너뛰어 통과로 보이는 것을 막는다 |
+| D41 | §D-5 "결과 화면에 검사별 통과 여부와 설명, 실패한 검사의 출력" | API·CLI 응답에서 학습자에게 주지 않은 목표 주소(preset에 없고 address 검사가 정한 주소)를 `[pc1:eth1 목표 주소]`로 가린다. 메시지와 출력 모두. DB에는 그대로 남긴다 | LAB-001은 주소를 계산하는 실습인데, 가리지 않으면 검증을 한 번 누르면 "eth1에 10.37.84.65/27가 없습니다"·ping 출력으로 답이 보인다 |
+| D42 | §D-2 "앱을 시작할 때 DB에서는 끝났는데 남아 있는 실습 컨테이너를 지운다" | 이 DB가 만든 실행만 정리한다. 실행 기록은 배포 전에 커밋하므로 배포 중에 멈춘 실행도 기록이 있다. 기록이 없는 실습(다른 DB, 테스트)은 건드리지 않는다. 진행 중인데 환경이 사라진 실행은 끝난 것으로 표시한다. 테스트는 `conftest.py`에서 기본 런타임을 가짜로 바꾼다 | 처음 구현은 기록 없는 실습도 지웠다. 그러면 실습을 푸는 중에 `pytest`를 돌리면 테스트 앱(임시 DB)이 진짜 실습을 지운다 |
+| D43 | §D-2 "시간 제한이 지나면 자동으로 정리" | 실습 API·CLI를 부를 때와 앱을 시작할 때 확인한다. 백그라운드 타이머는 두지 않는다. 지난 실행은 마지막 상태를 수집하고 정리한다. 통과한 실행은 `passed` 그대로, 아니면 `expired` | 타이머 없이도 다음 실습을 시작하기 전에는 반드시 정리된다. 아무도 부르지 않으면 컨테이너가 제한 시간보다 오래 남을 수 있다(노드가 작아 부담이 적다) |
+| D44 | §D-2 `deploying` 상태 | 배포는 요청 안에서 끝까지 기다린다(1~10초, 이미지를 처음 받으면 더). `deploying`은 그 사이에만 보인다. 정리하지 못한 실행은 `error`에 이유를 남기고 다음 앱 시작 때 다시 지운다 | 비동기 작업 없이 상태를 단순하게 둔다 |
+| D45 | §3.3 ERD `lab_runs`·`lab_attempts`·`lab_results` | `topology`(텍스트) → `topology_json`(노드·링크·preset 주소. 실행 환경과 무관한 형태), `goal`·`error` 열과 `lab_results.message`를 더했다. 이미지 digest는 로컬 이미지 id(`docker image inspect .Id`)다. AI 분석 열(`analysis_*`)은 AI 실패 분석을 만들 때 더한다. 처음 통과한 시각은 시도에서 계산한다 | 렌더링한 목표를 시나리오 파일 없이 다시 보여 주고, 배포 실패 이유와 검사별 이유를 남긴다. host 이미지는 로컬에서 빌드해 레지스트리 digest가 없을 수 있다 |
+| D46 | §4.1 "CLI·API 수직 슬라이스" | CLI는 서버를 거치지 않고 같은 서비스를 부른다. `--env-file`로 `.env`를 읽는다. `verify`는 통과 0·실패 1, 오류는 2. 접속 명령은 host `docker exec -it clab-nr-<id>-<노드> sh`, router는 `vtysh` | 서버 없이 실습을 돌리고 스크립트로도 쓸 수 있게 한다 |
 
 ## 2. 진행 현황 정정
 

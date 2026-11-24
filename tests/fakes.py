@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from integrations.labs.base import ExecResult, RenderedTopology
+from integrations.labs.base import ExecResult, RenderedTopology, RuntimeInfo
 from integrations.llm import LLMError
 
 
@@ -49,3 +49,6 @@ class FakeLabRuntime:
     def list_runs(self) -> list[str]:
         return sorted(self.deployed)
 
+    def describe(self) -> RuntimeInfo:
+        return RuntimeInfo("fake 1.0", {"host": {"image": "fake/host:1", "id": "sha256:host"},
+                                        "router": {"image": "fake/router:1", "id": "sha256:router"}})

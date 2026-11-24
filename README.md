@@ -4,7 +4,8 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest
+pytest                  # 실제 실습 배포 테스트는 빠진다
+pytest -m lab           # 실제 Containerlab으로 배포하는 테스트 (아래 "실습" 준비가 필요)
 python scripts/preview_concepts.py samples/concepts   # DB 반영 없이 개념 폴더 검사
 cd frontend && npm install && npm test                 # UI 테스트
 ```
@@ -42,6 +43,48 @@ AI 기능은 `GEMINI_API_KEY` 환경변수가 있어야 동작합니다. 없으�
 
 설정은 환경변수로 바꿉니다. [.env.example](.env.example) 참고.
 
+## 실습 (Containerlab)
+
+시스템은 설정이 빈 토폴로지를 배포하고, 학습자가 노드에 접속해 직접 설정하면 검사합니다. 실습은 한 번에 하나만 진행하고, 시간 제한(기본 60분)이 지나면 다음 실습 명령·API 호출 때 정리합니다.
+
+준비 (한 번, Linux 또는 WSL):
+
+```bash
+# Containerlab 0.83.0: 릴리스의 .deb를 받아 체크섬 확인 후 설치. sudo 없이 쓰도록 clab_admins 그룹을 만든다
+V=0.83.0
+curl -fsSLO https://github.com/srl-labs/containerlab/releases/download/v$V/containerlab_${V}_linux_amd64.deb
+curl -fsSLO https://github.com/srl-labs/containerlab/releases/download/v$V/checksums.txt
+grep "containerlab_${V}_linux_amd64.deb" checksums.txt | sha256sum -c -
+sudo dpkg -i containerlab_${V}_linux_amd64.deb
+sudo usermod -aG clab_admins,docker $USER   # 다시 로그인해야 적용 (그 전에는 sg clab_admins -c "명령")
+
+# 노드 이미지
+docker build -t netrecall/lab-host:1 integrations/labs/images/host
+docker pull quay.io/frrouting/frr:10.7.1
+```
+
+`clab_admins` 그룹에 든 사용자는 Containerlab을 root 권한으로 돌릴 수 있습니다. 학습자 본인만 넣으세요.
+
+명령줄 (서버 없이):
+
+```bash
+python -m backend.cli --env-file .env lab list
+python -m backend.cli --env-file .env lab start LAB-001   # 목표·대역·접속 명령을 보여 준다
+docker exec -it clab-nr-1-pc1 sh                          # 다른 터미널에서 직접 설정
+python -m backend.cli --env-file .env lab verify          # 검사별 결과. 통과하면 종료 코드 0
+python -m backend.cli --env-file .env lab finish          # 정리
+```
+
+API:
+
+- `GET /labs`: 실습 시나리오 목록 (`lab_scenarios/`)
+- `POST /labs/{id}/runs` (`{"evaluation_id": 3}`은 선택): 배포. 응답에 목표, 대역, 배포한 주소, 노드별 접속 명령. 진행 중인 실습이 있으면 409, 배포 실패는 502
+- `GET /lab-runs/current`: 진행 중인 실습 (없으면 `null`), `GET /lab-runs/{id}`
+- `POST /lab-runs/{id}/attempts`: 검증. 검사별 통과 여부·이유·출력. 학습자에게 주지 않은 목표 주소는 `[pc1:eth1 목표 주소]`로 가린다
+- `POST /lab-runs/{id}/finish`: 마지막 상태를 남기고 정리
+
+토폴로지 파일은 `NETRECALL_LAB_DIR`(기본 `~/.netrecall/labs`)에 생깁니다. 앱은 시작할 때 이 DB가 만든 실습 중 끝났는데 남은 컨테이너를 지웁니다.
+
 ## DB 스키마 변경
 
 앱은 시작할 때 DB를 최신 리비전으로 자동 마이그레이션합니다. 모델을 바꿨다면 리비전을 만들고 검토한 뒤 커밋하세요.
@@ -53,4 +96,5 @@ alembic revision --autogenerate -m "설명"
 ## 문서
 
 - Markdown 개념 형식: [docs/markdown-concept-format.md](docs/markdown-concept-format.md)
+- 실습 시나리오 형식: [docs/lab-scenario-format.md](docs/lab-scenario-format.md)
 - 설계서와 다른 점: [develop-memo.md](develop-memo.md)

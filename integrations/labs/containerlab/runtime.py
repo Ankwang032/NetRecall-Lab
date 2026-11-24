@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -16,15 +17,17 @@ from pathlib import Path
 
 import yaml
 
-from ..base import ExecResult, LabRuntimeError, RenderedTopology
-from .topology import RUN_NAME_PATTERN, clab_topology
+from ..base import ExecResult, LabRuntimeError, RenderedTopology, RuntimeInfo
+from .topology import IMAGES, RUN_NAME_PATTERN, TopologyError, clab_topology
 
 NODE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9]{0,14}$")
 DEPLOY_TIMEOUT = 300   # 이미지를 처음 받을 때 오래 걸린다
 DESTROY_TIMEOUT = 120
 EXEC_TIMEOUT = 15      # 검사 명령은 3초 안팎. 끝나지 않는 명령이 검증을 붙잡지 않게 한다
 ROUTER_READY_TIMEOUT = 30
+DEFAULT_WORK_DIR = "~/.netrecall/labs"
 DOCKER_ERRORS = ("Error response from daemon:", "OCI runtime exec failed")  # 명령이 아니라 docker가 실패함
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class ContainerlabRuntime:
@@ -34,7 +37,10 @@ class ContainerlabRuntime:
         self.docker = docker
 
     def deploy(self, run_name: str, topology: RenderedTopology) -> None:
-        doc = clab_topology(run_name, topology)  # 배포 전 정적 검사. 통과하지 못하면 TopologyError
+        try:
+            doc = clab_topology(run_name, topology)  # 배포 전 정적 검사
+        except TopologyError as exc:
+            raise LabRuntimeError(f"배포 전 정적 검사에 실패했습니다: {exc}") from None
         self.work_dir.mkdir(parents=True, exist_ok=True)
         path = self._topology_file(run_name)
         path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
@@ -76,6 +82,16 @@ class ContainerlabRuntime:
         p = self._run([self.docker, "ps", "-a", "--filter", "label=containerlab", "--format", '{{.Label "containerlab"}}'],
                       DESTROY_TIMEOUT, "실습 목록 조회")
         return sorted({name for name in p.stdout.split() if RUN_NAME_PATTERN.match(name)})
+
+    def describe(self) -> RuntimeInfo:
+        out = self._run([self.containerlab, "version"], DESTROY_TIMEOUT, "버전 조회").stdout
+        m = re.search(r"version:\s*(\S+)", ANSI.sub("", out))
+        images = {}
+        for kind, image in IMAGES.items():
+            p = subprocess.run([self.docker, "image", "inspect", "--format", "{{.Id}}", image], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=DESTROY_TIMEOUT)
+            images[kind] = {"image": image, "id": p.stdout.strip() if p.returncode == 0 else None}
+        return RuntimeInfo(f"containerlab {m.group(1) if m else '?'}", images)
 
     # ---- 내부 ----
 
@@ -126,3 +142,9 @@ def _is_json(text: str) -> bool:
 def _tail(text: str, lines: int = 5) -> str:
     kept = [line.strip() for line in text.splitlines() if line.strip()]
     return "\n".join(kept[-lines:])
+
+
+def containerlab_from_env() -> ContainerlabRuntime:
+    """토폴로지 파일을 둘 폴더는 NETRECALL_LAB_DIR (기본 ~/.netrecall/labs)."""
+    # .env.example을 복사하면 빈 값이 된다. 빈 값은 기본 폴더로 본다
+    return ContainerlabRuntime(Path(os.environ.get("NETRECALL_LAB_DIR") or DEFAULT_WORK_DIR).expanduser())
