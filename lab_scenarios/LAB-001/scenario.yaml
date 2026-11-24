@@ -1,0 +1,33 @@
+id: LAB-001
+title: 대역의 첫 주소와 마지막 주소로 통신하기
+type: build
+concepts: [NET-005]
+time_limit_minutes: 60
+
+parameters:              # 실행마다 대역과 프리픽스 길이를 새로 고른다
+  net: {pool: 10.0.0.0/8, prefix: {min: 24, max: 30}}
+
+nodes:
+  pc1: {kind: host}
+  pc2: {kind: host}
+
+links:
+  - [pc1:eth1, pc2:eth1]
+
+goal: |
+  대역 {net}의 첫 번째 사용 가능 주소를 pc1의 eth1에, 마지막 사용 가능 주소를 pc2의 eth1에 넣어
+  두 노드가 서로 ping되게 하라. 프리픽스 길이는 대역과 같게 넣는다.
+
+checks:
+  - id: pc1-address
+    description: pc1 eth1에 대역의 첫 번째 사용 가능 주소가 있다
+    address: {interface: pc1:eth1, address: net.host(1)}
+  - id: pc2-address
+    description: pc2 eth1에 대역의 마지막 사용 가능 주소가 있다
+    address: {interface: pc2:eth1, address: net.host(-1)}
+  - id: pc1-to-pc2
+    description: pc1 → pc2 ping
+    ping: {from: pc1, to: pc2:eth1}
+  - id: pc2-to-pc1
+    description: pc2 → pc1 ping
+    ping: {from: pc2, to: pc1:eth1}

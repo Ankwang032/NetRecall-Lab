@@ -370,6 +370,30 @@ Containerlab (개발용 Codespaces, 2코어·메모리 8GB)
 2. Phase 5 실습 수직 슬라이스 (설계서 v1.3 §4.1, §7.1.1)
 3. ~~별도 개념 폴더(D20)는 나중에~~ → 같은 날 사용자가 `.env`에 `NETRECALL_CONCEPTS_DIR=~/netrecall-concepts`를 넣었다. 폴더가 없고 `~`도 풀리지 않아 형식 맞추기 계획·동기화가 500이었다(계획 API는 이유도 돌려주지 않았다). 앱이 `~`를 홈 폴더로 바꾸고(`create_app`), 개념 폴더를 쓰는 API가 모두 "개념 폴더가 없습니다: 경로"를 돌려주게 고쳤다(+2 테스트, 전체 340개). 폴더를 만들고 샘플 3개를 `network/` 그대로 복사해 동기화 미리보기에서 "변경 없음 3"을 확인했다 (상대 경로가 같아 보관되지 않는다)
 
+### 2026-11-24 — Phase 5 시작: 환경 준비, 시나리오 형식, 검사 의미 (0~2단계)
+
+사용자 요청: Phase 5 계획(0 환경 준비 → 1 시나리오 형식 → 2 검사 의미 → 3 ContainerlabRuntime → 4 실행 기록·CLI·API → 5 기준 풀이 CI → 6 LAB-002 → 7 실습 화면)을 추천대로 진행한다. 0~2단계를 한 뒤 멈추고 확인받는다. 브랜치 `feat/lab-runtime`(`feat/concept-normalize`에서 분기). CI에는 기존 단위 테스트도 같이 돌린다. 같은 날 Notion 규칙 페이지의 머리 콜아웃("2·5절 미구현")과 본문을 저장소 문서에 맞췄다.
+
+| 영역 | 결과물 | 상태 |
+|---|---|---|
+| Containerlab | 0.83.0 `.deb`를 체크섬 확인 후 설치(SUID + `clab_admins` 그룹). **sudo 없이** 배포·정리가 된다 (D29) | 완료 |
+| host 이미지 | `integrations/labs/images/host/Dockerfile` — alpine 3.24(digest 고정) + iproute2 7.0.0 + iputils, `netrecall/lab-host:1`, 17.4MB (D30) | 완료 |
+| 출력 녹화 | LAB-001·LAB-002 모양을 실제로 배포해 `ip -j addr`·`ip -j route get`·ping(iputils·busybox)·`show ip route <주소> json`·running-config를 녹화했다 → `tests/labs/fixtures/` | 완료 |
+| 시나리오 형식 | `backend/services/lab_scenario.py` — 읽기·검증, 대역 무작위 선택(겹치지 않게), 주소 식 `<대역>.host(n)`, 렌더링(`RenderedLab`). `lab_scenarios/LAB-001/scenario.yaml`. 문서 `docs/lab-scenario-format.md` (D31, D34) | 완료 |
+| 토폴로지·정적 검사 | `integrations/labs/containerlab/topology.py` — 노드 종류별 이미지·자원 제한, `network-mode: none`, 노드 키 허용 목록 검사 (D34) | 완료 |
+| 검사 의미 | `integrations/labs/base.py` `LabRuntime`·`ExecResult`, `backend/services/lab_checks.py` — 상태 수집, `ping`·`route`·`address`, 주소 유일성 자동 검사 (D32, D33) | 완료 |
+
+검증
+
+- Python 테스트 426개 통과 (+86): `tests/labs/test_lab_scenario.py` 47(형식 오류 35가지, 프리픽스 범위 전체에서 주소 겹침, 대역 겹치지 않음), `test_clab_topology.py` 17(정적 검사가 마운트·exec·관리망·다른 이미지·노드 7개를 거부), `test_lab_checks.py` 22(녹화한 실제 출력으로 정답·오답·실행 실패)
+- 렌더링한 LAB-001 토폴로지를 실제로 배포: 메모리 64MB, CPU quota 50000/100000, `network-mode: none` 적용 확인
+- 실제 LAB-001(무작위 대역 `10.8.197.112/29`)에 검사기를 임시 `docker exec` 어댑터로 돌림: 설정 전 실패, 정답 통과, "pc1 `lo`에 pc2 주소"는 주소 유일성에서 실패, "프리픽스 /16"은 address 검사에서 실패(ping은 통과). 정리 후 컨테이너·링크·`/etc/hosts` 항목 없음
+
+다음 작업
+
+1. 사용자 확인 후 3단계: `ContainerlabRuntime`(배포·`docker exec`·정리·남은 실습 목록, 라우터 `vtysh.conf`, preset 주소), `pytest -m lab`
+2. 4단계: `lab_runs`·`lab_attempts`·`lab_results`, 실행 상태, CLI·API, 사용자가 LAB-001 직접 풀기
+
 ## 1. 결정 사항 (2026-11-12)
 
 다음 DB 모델(§3) 작업에 적용한다.
@@ -436,6 +460,18 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 | D26 | (없음) | 따로 "Notion 동기화" 버튼을 두지 않고, "동기화" 버튼이 Markdown → Notion 순서로 둘 다 한다. Notion이 설정되지 않은 503은 조용히 건너뛴다 | 설정 여부를 알려 주는 API를 따로 만들지 않아도 된다. Notion을 쓰지 않는 사람에게 쓸모없는 버튼이 보이지 않는다 |
 | D27 | (없음) | 동기화 결과에 `warnings`를 더했다 (Notion: 내보내지 못한 블록, 잘린 페이지, 끊긴 연결) | Notion 규칙 페이지가 "빼고 경고"라고 정한 경우를 알릴 곳이 없었다 |
 | D28 | (없음) | 개념 추가 창은 모든 파일을 plan부터 거친다. AI 변환은 자동으로 하지 않고 "형식 맞추기 (AI N번)" 버튼으로 시작한다. 파일 하나가 실패하면 멈추고, 다시 누르면 남은 파일부터 한다 | 파일 하나에 20~60초, 하루 20회 한도. 실패가 이어지면(과부하·한도) 남은 호출을 버리지 않기 위해 |
+
+### 2026-11-24 추가
+
+| # | 설계서 | 변경 | 이유 |
+|---|---|---|---|
+| D29 | §D-7 "sudo 없는 실행은 가정" | Codespaces에서 확인했다. 공식 `.deb`가 SUID와 `clab_admins` 그룹을 만들고, 그룹에 든 사용자는 sudo 없이 `containerlab deploy/destroy`를 한다. 그룹은 새 로그인부터 적용돼 이번 세션은 `sg clab_admins`로 확인했다 | 남은 가정은 WSL(Docker Desktop·WSL 안 Docker)뿐이다 |
+| D30 | §D-4 host 이미지 (alpine 3.20 + iproute2) | alpine 3.24(digest 고정) + iproute2 + iputils | alpine 3.20은 2026-04에 지원이 끝났다. iputils ping은 응답 대기·전체 시간 옵션이 검사 의미와 맞다 |
+| D31 | §D-4 검사 `to: pc2:eth1` | 검사 대상은 인터페이스(`노드:ethN`)로만 가리키고, 그 주소는 `preset.addresses`나 `address` 검사에서 정한다. 이 표가 주소 유일성 검사의 "의도한 곳"이다. 주소 식은 `<대역>.host(n)`, `n<0`은 뒤에서(`-1` = 마지막 사용 가능 주소) | LAB-001은 주소 없이 배포하므로 preset에 주소가 없다. 주소를 직접 쓰면 실행마다 바뀌는 대역을 쓸 수 없고, 유일성 검사의 기준도 없다 |
+| D32 | §D-5 route: Linux 노드는 `ip -j route get` | Linux 노드에는 `protocol`을 쓸 수 없고, 경로가 있고 `local`이 아니면 통과다 | `ip route get` 결과에 프로토콜이 없다(녹화 확인). 프로토콜 조건은 라우터에만 의미가 있다 |
+| D33 | §D-5 ping "3번 보내 1번 이상 응답, 한 번에 1초, 전체 5초" | `ping -n -c 3 -W 1`, 판정은 종료 코드가 아니라 출력의 "N received"(iputils)·"N packets received"(busybox). 전체 시간 제한은 실행기의 명령 시간 제한으로 둔다(3단계) | iputils에 `-w`를 주면 3번 중 1번만 응답해도 종료 코드 1이다. FRR 이미지의 ping은 busybox라 출력과 `-W` 뜻이 다르다. 두 형식 모두 3초 안팎에 끝난다 |
+| D34 | §D-4 정적 검사 (값 미정) | 자원 제한: host CPU 0.5·메모리 64MB, router CPU 1·메모리 256MB. 시간 제한 1~120분(기본 60). `pool`은 사설 대역 안. 노드 항목은 `kind`만, 렌더링한 토폴로지의 노드 키는 허용 목록 | 시나리오가 이미지·마운트·명령을 고를 자리를 없앤다 |
+| D35 | §D-5 상태 수집 "FRRouting 노드는 실행 중인 설정과 라우팅 테이블" | 라우터도 `ip -j addr show`를 같이 모은다 | `ip addr add`로 넣은 주소는 running-config에 나오지 않는다(녹화 확인). 주소 유일성 검사에 모든 노드의 주소가 필요하다 |
 
 ## 2. 진행 현황 정정
 
@@ -515,4 +551,5 @@ React 도입 시점은 설계서대로 둔다(변경 없음).
 - **Gemini 무료 등급 한도**: 하루 20회. 원래 질문만 풀면 카드 1장에 1번이지만, 변형 질문까지 풀면 4번(원래 질문 평가, 변형 생성, 난이도 평가, 변형 질문 평가)이라 하루 5장쯤이다(D15). 유료 전환이나 다른 모델을 검토 중이다(2026-11-19 Claude 예비 비교). 형식 맞추기는 파일 1개에 1번이라, 노트 12개를 가져온 날은 복습에 8번만 남는다.
 - **복습 기록과 답안 연결**: `review_logs`와 `answer_submissions`는 아직 연결되지 않는다. 설계서 Phase 6(답안 평가를 복습에 반영)에서 정한다.
 - **테스트 경고**: Starlette 1.10이 `TestClient`에서 `httpx` 사용을 지원 중단 예정이라고 경고한다. 지금은 동작에 영향이 없다. 의존성을 올릴 때 다시 확인한다.
-- **실행 환경**: Codespaces의 Python은 3.14.2다. `requires-python`은 `>=3.11`로 두었다. Containerlab(Phase 5)은 ~~Codespaces에서 동작하지 않을 가능성이 높다~~ → 2026-11-19 Codespaces에서 동작을 확인했다. 실행 기준은 로컬 PC(Linux, Windows는 WSL)이고, sudo 없는 실행(`clab_admins`)은 아직 실험으로 확인하지 못했다. 설계서 v1.2 §D-7에 정리했다.
+- **실행 환경**: Codespaces의 Python은 3.14.2다. `requires-python`은 `>=3.11`로 두었다. Containerlab(Phase 5)은 ~~Codespaces에서 동작하지 않을 가능성이 높다~~ → 2026-11-19 Codespaces에서 동작을 확인했다. 실행 기준은 로컬 PC(Linux, Windows는 WSL)이고, sudo 없는 실행(`clab_admins`)은 아직 실험으로 확인하지 못했다. 설계서 v1.2 §D-7에 정리했다. → 2026-11-24 Codespaces에 Containerlab을 설치해 sudo 없는 실행을 확인했다(D29). 남은 가정은 WSL이다.
+- **LAB-002의 OSPF 오답**: FRR 이미지는 기본으로 mgmtd·zebra·staticd만 켠다(`/etc/frr/daemons`에서 ospfd=no). 오답 테스트 "OSPF 사용"을 하려면 ospfd를 켜 두거나 학습자가 켜는 방법을 정해야 한다. 6단계에서 정한다.
