@@ -1,15 +1,42 @@
 """실습 테스트 공통 도우미. 대역을 10.37.84.64/27로 고정한 LAB-001로 녹화한 출력(fixtures/)을 그대로 쓴다."""
 import json
+import random
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from backend.services.lab_checks import STATE_COMMANDS, ping_argv
 from integrations.labs.base import ExecResult
+from integrations.labs.containerlab.topology import IMAGES
 from tests.fakes import FakeLabRuntime
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = Path(__file__).parent / "fixtures"
 ADDR = tuple(STATE_COMMANDS["host"]["addresses"])
 FIRST, LAST = "10.37.84.65", "10.37.84.94"
+
+
+def require_lab_tools() -> None:
+    """실제 배포 테스트(`pytest -m lab`)는 명시해서 돌리므로 준비가 안 됐으면 건너뛰지 않고 실패한다."""
+    for tool in ("containerlab", "docker"):
+        if shutil.which(tool) is None:
+            pytest.fail(f"{tool}이 없습니다")
+    for image in IMAGES.values():
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode != 0:
+            pytest.fail(f"이미지가 없습니다: {image}")
+
+
+def live_run_id() -> int:
+    return random.randint(900_000, 999_999)  # 앱의 실행 id와 겹치지 않게 큰 수를 쓴다
+
+
+def labelled(run_name: str) -> int:
+    """그 실습 이름이 붙은 컨테이너 수 (정리됐는지 확인)."""
+    out = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=containerlab={run_name}"],
+                         capture_output=True, text=True).stdout
+    return len(out.split())
 
 
 def fixture(name: str) -> str:

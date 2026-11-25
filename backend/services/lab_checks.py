@@ -158,9 +158,10 @@ def _address(check: RenderedCheck, addresses: dict[str, list[str]] | None, out: 
         return _result(check, True, f"{check.interface}에 {check.target}가 있습니다", output)
     ip = check.target.split("/")[0]
     same_ip = [a for a in have if a.split("/")[0] == ip]
-    if same_ip:
-        return _result(check, False, f"{check.interface}의 {same_ip[0]}는 프리픽스 길이가 다릅니다 (기대: {check.target})",
-                       output)
+    if same_ip:  # 주소는 맞으니 프리픽스만 말한다. 출력은 메시지와 같은 내용이라 붙이지 않는다
+        have_prefix, want_prefix = same_ip[0].split("/")[1], check.target.split("/")[1]
+        return _result(check, False, f"{check.interface}의 {ip}는 프리픽스 길이가 /{have_prefix}입니다 "
+                                     f"(대역은 /{want_prefix})", "")
     return _result(check, False, f"{check.interface}에 {check.target}가 없습니다", output)
 
 

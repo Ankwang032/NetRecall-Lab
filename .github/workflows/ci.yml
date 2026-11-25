@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: 단위 테스트 (Python · UI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: pytest
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build # 타입 검사 포함
+        working-directory: frontend
+
+  lab:
+    name: 실습 검증기 (실제 Containerlab, 기준 풀이·오답)
+    runs-on: ubuntu-latest
+    env:
+      CONTAINERLAB_VERSION: "0.83.0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - name: Containerlab 설치 (체크섬 확인, sudo 없이 쓰도록 clab_admins)
+        run: |
+          V=$CONTAINERLAB_VERSION
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://github.com/srl-labs/containerlab/releases/download/v$V/containerlab_${V}_linux_amd64.deb"
+          curl -fsSLO "https://github.com/srl-labs/containerlab/releases/download/v$V/checksums.txt"
+          grep "containerlab_${V}_linux_amd64.deb" checksums.txt | sha256sum -c -
+          sudo dpkg -i "containerlab_${V}_linux_amd64.deb"
+          sudo usermod -aG clab_admins "$USER"
+      - name: 노드 이미지
+        run: |
+          docker build -t netrecall/lab-host:1 integrations/labs/images/host
+          docker pull quay.io/frrouting/frr:10.7.1
+      - name: 실제 배포 테스트
+        run: sg clab_admins -c "python -m pytest -m lab -v"

@@ -4,9 +4,6 @@
 (`docker build -t netrecall/lab-host:1 integrations/labs/images/host`, `docker pull quay.io/frrouting/frr:10.7.1`).
 명시해서 돌리는 테스트라 준비가 안 됐으면 건너뛰지 않고 실패한다.
 """
-import random
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,6 +15,8 @@ from integrations.labs.base import LabRuntimeError
 from integrations.labs.containerlab import runtime as rt
 from integrations.labs.containerlab.runtime import ContainerlabRuntime
 from integrations.labs.containerlab.topology import IMAGES
+from tests.labs.lab_fixtures import labelled, require_lab_tools
+from tests.labs.lab_fixtures import live_run_id as run_id
 
 pytestmark = pytest.mark.lab
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,27 +53,12 @@ checks:
 
 @pytest.fixture(scope="module", autouse=True)
 def ready():
-    for tool in ("containerlab", "docker"):
-        if shutil.which(tool) is None:
-            pytest.fail(f"{tool}이 없습니다")
-    for image in IMAGES.values():
-        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode != 0:
-            pytest.fail(f"이미지가 없습니다: {image}")
+    require_lab_tools()
 
 
 @pytest.fixture
 def runtime(tmp_path):
     return ContainerlabRuntime(tmp_path)
-
-
-def run_id() -> int:
-    return random.randint(900_000, 999_999)  # 앱의 실행 id와 겹치지 않게 큰 수를 쓴다
-
-
-def labelled(run_name: str) -> int:
-    out = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=containerlab={run_name}"],
-                         capture_output=True, text=True).stdout
-    return len(out.split())
 
 
 def test_lab_001_deploy_verify_destroy(runtime, monkeypatch):

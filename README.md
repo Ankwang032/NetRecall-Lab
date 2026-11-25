@@ -5,7 +5,7 @@
 ```bash
 pip install -e ".[dev]"
 pytest                  # 실제 실습 배포 테스트는 빠진다
-pytest -m lab           # 실제 Containerlab으로 배포하는 테스트 (아래 "실습" 준비가 필요)
+pytest -m lab           # 실제 Containerlab으로 배포하는 테스트, 기준 풀이·오답 포함 (아래 "실습" 준비가 필요)
 python scripts/preview_concepts.py samples/concepts   # DB 반영 없이 개념 폴더 검사
 cd frontend && npm install && npm test                 # UI 테스트
 ```

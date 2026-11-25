@@ -132,7 +132,8 @@ def test_wrong_prefix_fails_the_address_check_even_though_ping_works():
     r = results(v)
     assert not v.passed
     assert r["pc1-to-pc2"].passed and r["pc2-to-pc1"].passed
-    assert r["pc2-address"].message == "eth1의 10.37.84.94/24는 프리픽스 길이가 다릅니다 (기대: 10.37.84.94/27)"
+    assert r["pc2-address"].message == "eth1의 10.37.84.94는 프리픽스 길이가 /24입니다 (대역은 /27)"
+    assert r["pc2-address"].output == ""
 
 
 def test_target_address_on_the_wrong_node_fails_uniqueness():

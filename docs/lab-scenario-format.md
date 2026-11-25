@@ -155,3 +155,30 @@ checks:
 - 노드 1~6개, 노드 항목의 키는 `kind`·`image`·`network-mode`·`cpu`·`memory`뿐입니다. 호스트 경로 마운트(`binds`)나 실행 명령(`exec`)은 들어갈 수 없습니다.
 - 이미지는 노드 종류별로 정한 것만, `network-mode`는 `none`, 자원 제한은 노드 종류별 값과 같아야 합니다.
 - 링크 끝점은 있는 노드의 `ethN`이고, 한 번씩만 씁니다.
+
+## 기준 풀이와 오답
+
+시나리오마다 `tests/labs/solutions/<시나리오 id>/cases.yaml`에 기준 풀이와 오답을 둡니다. 정답이 시나리오 파일에 남지 않도록 테스트 쪽에 둡니다. 검사 의미를 바꾸면 이 파일부터 고칩니다. 검증기를 믿을 근거가 이 테스트입니다.
+
+```yaml
+solutions:                       # 모든 검사를 통과해야 한다
+  - id: ip-addr
+    description: ip addr로 첫·마지막 사용 가능 주소를 넣는다
+    steps:                       # 노드 → 차례로 실행할 명령
+      pc1: ["ip addr add {net.host(1)}/{net.prefix} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)}/{net.prefix} dev eth1"]
+
+wrong:                           # fails에 적은 검사만 실패해야 한다 (더 실패해도, 덜 실패해도 테스트 실패)
+  - id: no-prefix
+    description: 프리픽스를 빼면 /32로 들어간다
+    steps:
+      pc1: ["ip addr add {net.host(1)} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)} dev eth1"]
+    fails: [pc1-address, pc2-address, pc1-to-pc2, pc2-to-pc1]
+```
+
+- 시나리오마다 기준 풀이와 오답이 하나 이상 있어야 합니다.
+- 명령 안의 식은 실행마다 고른 대역으로 바뀝니다: `{대역.host(n)}`(주소만), `{대역.prefix}`(프리픽스 길이), `{대역.netmask}`, `{대역.network}`(네트워크 주소).
+- 명령은 셸을 거치지 않고 인자 목록으로 나눠 실행합니다(따옴표는 셸처럼 쓸 수 있지만 `|`·`;` 같은 셸 문법은 안 됩니다). 명령이 실패하면(종료 코드가 0이 아니면) 오답이 아니라 풀이 파일의 오류로 보고 테스트가 실패합니다.
+- `fails`에는 시나리오의 검사 id와 주소 유일성 자동 검사(`auto:unique-addresses`)를 쓸 수 있습니다.
+- 형식 검사는 기본 `pytest`에서, 실제 배포 검사는 `pytest -m lab`(GitHub Actions의 `lab` 작업)에서 돕니다.

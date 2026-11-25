@@ -1,0 +1,61 @@
+# LAB-001 기준 풀이와 오답 (설계서 §D-5 "검증기 테스트", 형식은 docs/lab-scenario-format.md)
+# 기준 풀이(solutions)는 모든 검사를 통과해야 하고, 오답(wrong)은 fails에 적은 검사만 실패해야 한다.
+
+solutions:
+  - id: ip-addr
+    description: ip addr로 첫·마지막 사용 가능 주소를 대역의 프리픽스와 함께 넣는다
+    steps:
+      pc1: ["ip addr add {net.host(1)}/{net.prefix} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)}/{net.prefix} dev eth1"]
+
+  - id: ifconfig
+    description: busybox ifconfig와 넷마스크로 넣어도 최종 상태가 같으면 통과한다
+    steps:
+      pc1: ["ifconfig eth1 {net.host(1)} netmask {net.netmask}"]
+      pc2: ["ifconfig eth1 {net.host(-1)} netmask {net.netmask}"]
+
+wrong:
+  - id: no-prefix
+    description: 프리픽스를 빼면 /32로 들어가 상대가 같은 링크에 있는 줄 모른다
+    steps:
+      pc1: ["ip addr add {net.host(1)} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)} dev eth1"]
+    fails: [pc1-address, pc2-address, pc1-to-pc2, pc2-to-pc1]
+
+  - id: wider-prefix
+    description: pc2에 /16을 넣으면 ping은 되지만 주소 검사에서 걸린다
+    steps:
+      pc1: ["ip addr add {net.host(1)}/{net.prefix} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)}/16 dev eth1"]
+    fails: [pc2-address]
+
+  - id: network-address
+    description: 첫 사용 가능 주소 대신 네트워크 주소를 넣는다
+    steps:
+      pc1: ["ip addr add {net.network}/{net.prefix} dev eth1"]
+      pc2: ["ip addr add {net.host(-1)}/{net.prefix} dev eth1"]
+    fails: [pc1-address, pc2-to-pc1]
+
+  - id: swapped
+    description: 두 주소를 바꿔 넣으면 ping은 각자 자기 주소로 가서 통과하고 주소 검사와 유일성 검사가 잡는다
+    steps:
+      pc1: ["ip addr add {net.host(-1)}/{net.prefix} dev eth1"]
+      pc2: ["ip addr add {net.host(1)}/{net.prefix} dev eth1"]
+    fails: [pc1-address, pc2-address, auto:unique-addresses]
+
+  - id: loopback
+    description: pc1의 lo에 pc2 주소를 넣으면 pc1 → pc2 ping이 pc1 안에서 성공한다
+    steps:
+      pc1:
+        - "ip addr add {net.host(1)}/{net.prefix} dev eth1"
+        - "ip addr add {net.host(-1)}/32 dev lo"
+    fails: [pc2-address, pc2-to-pc1, auto:unique-addresses]
+
+  - id: link-down
+    description: 주소는 맞지만 pc2의 eth1을 내렸다
+    steps:
+      pc1: ["ip addr add {net.host(1)}/{net.prefix} dev eth1"]
+      pc2:
+        - "ip addr add {net.host(-1)}/{net.prefix} dev eth1"
+        - "ip link set eth1 down"
+    fails: [pc1-to-pc2, pc2-to-pc1]
