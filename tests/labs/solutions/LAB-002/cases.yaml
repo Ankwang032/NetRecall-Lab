@@ -1,0 +1,89 @@
+# LAB-002 기준 풀이와 오답 (설계서 §D-5 "검증기 테스트", 형식은 docs/lab-scenario-format.md)
+# 기준 풀이(solutions)는 모든 검사를 통과해야 하고, 오답(wrong)은 fails에 적은 검사만 실패해야 한다.
+# 주소: PC1 lan1.host(10) – R1 eth1 lan1.host(1) / R1 eth2 transit.host(1) – R2 eth2 transit.host(2) / R2 eth1 lan2.host(1) – PC2 lan2.host(10)
+
+solutions:
+  - id: vtysh-static
+    description: 라우터는 vtysh로 상대 LAN 정적 경로를, PC는 기본 게이트웨이를 넣는다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} {transit.host(2)}"']
+      r2: ['vtysh -c "configure terminal" -c "ip route {lan1.network}/{lan1.prefix} {transit.host(1)}"']
+
+  - id: ip-route-static
+    description: 라우터에 ip route add로 넣어도 된다 (FRRouting은 kernel 경로로 보여 준다)
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ["ip route add {lan2.network}/{lan2.prefix} via {transit.host(2)}"]
+      r2: ["ip route add {lan1.network}/{lan1.prefix} via {transit.host(1)}"]
+
+  - id: default-routes
+    description: 라우터끼리 서로를 기본 경로로 가리켜도 최종 상태가 맞으면 통과한다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route 0.0.0.0/0 {transit.host(2)}"']
+      r2: ['vtysh -c "configure terminal" -c "ip route 0.0.0.0/0 {transit.host(1)}"']
+
+wrong:
+  - id: r2-missing
+    description: R2에 돌아오는 경로가 없어 요청은 가도 응답이 돌아오지 못한다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} {transit.host(2)}"']
+    fails: [pc1-to-pc2, pc2-to-pc1, r2-route]
+
+  - id: pc2-gateway-missing
+    description: PC2에 기본 게이트웨이가 없다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} {transit.host(2)}"']
+      r2: ['vtysh -c "configure terminal" -c "ip route {lan1.network}/{lan1.prefix} {transit.host(1)}"']
+    fails: [pc1-to-pc2, pc2-to-pc1, pc2-route]
+
+  - id: wrong-next-hop-connected
+    description: R1의 next-hop을 연결된 대역의 엉뚱한 주소(PC1)로 넣으면 경로는 설치되지만 ping이 잡는다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} {lan1.host(10)}"']
+      r2: ['vtysh -c "configure terminal" -c "ip route {lan1.network}/{lan1.prefix} {transit.host(1)}"']
+    fails: [pc1-to-pc2, pc2-to-pc1]
+
+  - id: wrong-next-hop-unreachable
+    description: R1의 next-hop이 연결되지 않은 주소면 경로가 선택되지 않는다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} 192.168.255.1"']
+      r2: ['vtysh -c "configure terminal" -c "ip route {lan1.network}/{lan1.prefix} {transit.host(1)}"']
+    fails: [pc1-to-pc2, pc2-to-pc1, r1-route]
+
+  - id: ospf
+    description: 동적 라우팅(OSPF)을 쓰면 ping은 되지만 경로 검사가 프로토콜로 잡는다
+    # 실습의 FRRouting은 ospfd를 켜지 않는다. 이 오답은 테스트가 직접 켠다. 이웃이 맺어질 때까지 기다리는 줄만 sh를 쓴다
+    steps:
+      pc1: ["ip route add default via {lan1.host(1)}"]
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1:
+        - "/usr/lib/frr/ospfd -d -F traditional -A 127.0.0.1"
+        - 'vtysh -c "configure terminal" -c "interface eth2" -c "ip ospf network point-to-point" -c "exit" -c "router ospf" -c "network {transit.network}/{transit.prefix} area 0" -c "network {lan1.network}/{lan1.prefix} area 0"'
+      r2:
+        - "/usr/lib/frr/ospfd -d -F traditional -A 127.0.0.1"
+        - 'vtysh -c "configure terminal" -c "interface eth2" -c "ip ospf network point-to-point" -c "exit" -c "router ospf" -c "network {transit.network}/{transit.prefix} area 0" -c "network {lan2.network}/{lan2.prefix} area 0"'
+        - "sh -c \"for i in $(seq 14); do vtysh -c 'show ip route ospf' | grep -q '^O>' && exit 0; sleep 1; done; exit 1\""
+    fails: [r1-route, r2-route]
+
+  - id: loopback
+    description: 경로는 다 맞지만 PC1의 lo에 PC2 주소가 남아 있으면 PC1 → PC2 ping이 PC1 안에서 성공한다
+    steps:
+      pc1:
+        - "ip route add default via {lan1.host(1)}"
+        - "ip addr add {lan2.host(10)}/32 dev lo"
+      pc2: ["ip route add default via {lan2.host(1)}"]
+      r1: ['vtysh -c "configure terminal" -c "ip route {lan2.network}/{lan2.prefix} {transit.host(2)}"']
+      r2: ['vtysh -c "configure terminal" -c "ip route {lan1.network}/{lan1.prefix} {transit.host(1)}"']
+    fails: [pc2-to-pc1, pc1-route, auto:unique-addresses]

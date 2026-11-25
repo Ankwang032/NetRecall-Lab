@@ -18,16 +18,33 @@ goal: |
   대역 {net}의 첫 번째 사용 가능 주소를 pc1의 eth1에, 마지막 사용 가능 주소를 pc2의 eth1에 넣어
   두 노드가 서로 ping되게 하라. 프리픽스 길이는 대역과 같게 넣는다.
 
+# hints: 검사마다 개념 질문 → 확인할 곳 → 할 일 순서. 목표 주소는 쓰지 않는다(학습자가 계산할 값)
 checks:
   - id: pc1-address
     description: pc1 eth1에 대역의 첫 번째 사용 가능 주소가 있다
     address: {interface: pc1:eth1, address: net.host(1)}
+    hints:
+      - 대역의 맨 처음 주소는 네트워크 주소라서 장비에 넣지 않습니다. 첫 번째 사용 가능 주소는 그다음 주소입니다.
+      - /{net.prefix} 대역의 크기는 2^(32−{net.prefix})개입니다. {net}의 시작 주소에 1을 더해 보세요.
+      - pc1에서 `ip -br addr show eth1`로 넣은 주소를 보세요. 주소 뒤의 프리픽스도 대역과 같은 /{net.prefix}인지 보세요. 틀렸으면 `ip addr del`로 지우고 다시 넣으세요.
   - id: pc2-address
     description: pc2 eth1에 대역의 마지막 사용 가능 주소가 있다
     address: {interface: pc2:eth1, address: net.host(-1)}
+    hints:
+      - 대역의 맨 끝 주소는 브로드캐스트 주소라서 장비에 넣지 않습니다. 마지막 사용 가능 주소는 그 바로 앞 주소입니다.
+      - /{net.prefix} 대역의 크기는 2^(32−{net.prefix})개입니다. 시작 주소에 (크기 − 2)를 더하면 마지막 사용 가능 주소입니다.
+      - pc2에서 `ip -br addr show eth1`로 넣은 주소와 프리픽스(/{net.prefix})를 보세요. 프리픽스를 빼고 넣으면 /32로 들어갑니다.
   - id: pc1-to-pc2
     description: pc1 → pc2 ping
     ping: {from: pc1, to: pc2:eth1}
+    hints:
+      - 두 노드가 라우터 없이 직접 통신하려면 상대가 자기와 같은 대역에 있다고 알아야 합니다.
+      - pc1에서 `ip route`를 보세요. {net} 대역으로 가는 줄(eth1)이 있나요? 없다면 주소의 프리픽스가 틀렸을 가능성이 큽니다.
+      - ping에는 프리픽스 없이 주소만 씁니다(`ping -c 3 <pc2 주소>`). 주소가 맞는데도 안 되면 `ip link show eth1`로 eth1이 UP인지 보세요.
   - id: pc2-to-pc1
     description: pc2 → pc1 ping
     ping: {from: pc2, to: pc1:eth1}
+    hints:
+      - ping은 요청과 응답이 모두 돌아와야 성공합니다. 이번에는 pc2가 보내는 쪽입니다.
+      - pc2에서 `ip -br addr show eth1`로 주소가 들어갔는지, `ip route`로 {net} 대역 줄이 있는지 보세요.
+      - pc2에서 `ping -c 3 <pc1 주소>`를 직접 쳐 보세요. `Network unreachable`이면 pc2의 주소·프리픽스 문제이고, 응답만 없으면 pc1의 주소나 eth1 상태 문제입니다.

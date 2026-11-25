@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -28,6 +28,7 @@ class LabRun(Base):
     evaluation_id: Mapped[int | None] = mapped_column(ForeignKey("answer_evaluations.id"))  # 이 실습을 추천한 평가
     mode: Mapped[str] = mapped_column(String(16))  # build
     status: Mapped[str] = mapped_column(String(16), index=True)
+    level: Mapped[str] = mapped_column(String(16), server_default="normal")  # 도움 수준: easy | normal | hard
     params_json: Mapped[dict] = mapped_column(JSON)    # 대역 이름 → 고른 대역
     topology_json: Mapped[dict] = mapped_column(JSON)  # 노드·링크·preset 주소
     checks_json: Mapped[dict] = mapped_column(JSON)    # 렌더링한 검사 목록과 검사가 가리키는 주소의 위치
@@ -62,3 +63,15 @@ class LabResult(Base):
     passed: Mapped[bool]
     message: Mapped[str] = mapped_column(Text)
     output: Mapped[str] = mapped_column(Text)
+
+
+class LabHint(Base):
+    """학습자가 본 힌트 한 단계. 같은 단계는 한 번만 남는다."""
+    __tablename__ = "lab_hints"
+    __table_args__ = (UniqueConstraint("run_id", "check_id", "step"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("lab_runs.id"), index=True)
+    check_id: Mapped[str] = mapped_column(String(64))
+    step: Mapped[int]  # 1부터
+    shown_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

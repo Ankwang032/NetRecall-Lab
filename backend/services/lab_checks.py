@@ -21,6 +21,12 @@ from .lab_scenario import RenderedCheck, RenderedLab
 
 PING_COUNT = 3
 UNIQUE_CHECK_ID = "auto:unique-addresses"  # 시나리오 검사 id 형식(소문자·숫자·-)과 겹치지 않는다
+UNIQUE_DESCRIPTION = "검사가 가리키는 주소가 의도한 인터페이스에만 있다"
+UNIQUE_HINTS = (  # 모든 실습에 붙는 검사라 힌트도 코드에 둔다. 특정 주소를 말하지 않는다
+    "같은 주소가 두 곳에 있으면 ping이 엉뚱한 곳(보내는 노드 자신 등)에서 응답해 통과한 것처럼 보일 수 있습니다.",
+    "결과 문구에 나온 노드에서 `ip addr`로 lo를 포함한 모든 인터페이스의 주소를 보세요.",
+    "의도하지 않은 곳에 남은 주소를 `ip addr del <주소/프리픽스> dev <인터페이스>`로 지우세요.",
+)
 PING_STATS = re.compile(r"(\d+) packets transmitted, (\d+) (?:packets )?received")  # iputils·busybox
 
 # 노드 종류별 상태 수집 명령. 라우터의 학습자가 ip addr로 넣은 주소는 running-config에 나오지 않아 주소도 따로 모은다.
@@ -117,18 +123,19 @@ def _router_route(check: RenderedCheck, out: CommandOutput) -> CheckResult:
     data = _json(out)
     if not isinstance(data, dict):
         return _result(check, False, _unreadable(out, "경로 조회 결과"), _text(out))
+    # 실패하면 출력을 붙이지 않는다. 메시지가 같은 내용을 말하고, 경로 표 전체는 시도 기록의 수집 상태에 남는다
     output = json.dumps(data, ensure_ascii=False, indent=2)
     entries = [(prefix, e) for prefix, routes in data.items() if isinstance(routes, list) for e in routes]
     selected = [(prefix, e) for prefix, e in entries if e.get("selected")]
     if not selected:
-        return _result(check, False, f"{check.target}로 가는 경로가 없습니다 (선택된 경로 없음)", output)
+        return _result(check, False, f"{check.target}로 가는 경로가 없습니다 (선택된 경로 없음)", "")
     prefix, route = selected[0]
     protocol = route.get("protocol")
     if not route.get("installed"):
-        return _result(check, False, f"{prefix} 경로({protocol})가 커널에 설치되지 않았습니다", output)
+        return _result(check, False, f"{prefix} 경로({protocol})가 커널에 설치되지 않았습니다", "")
     if protocol not in (check.protocols or ()):
         allowed = ", ".join(check.protocols or ())
-        return _result(check, False, f"{prefix} 경로의 프로토콜이 {protocol}입니다 (허용: {allowed})", output)
+        return _result(check, False, f"{prefix} 경로의 프로토콜이 {protocol}입니다 (허용: {allowed})", "")
     return _result(check, True, f"{prefix} 경로({protocol}, {_nexthops(route)})를 씁니다", output)
 
 
@@ -136,13 +143,13 @@ def _host_route(check: RenderedCheck, out: CommandOutput) -> CheckResult:
     if out.exit_code is None:
         return _result(check, False, f"명령을 실행하지 못했습니다: {out.stderr}", "")
     if out.exit_code != 0:
-        return _result(check, False, f"{check.target}로 가는 경로가 없습니다", _text(out))
+        return _result(check, False, f"{check.target}로 가는 경로가 없습니다", "")  # 출력은 RTNETLINK 오류 한 줄
     data = _json(out)
     if not isinstance(data, list) or not data or not isinstance(data[0], dict):
         return _result(check, False, _unreadable(out, "경로 조회 결과"), _text(out))
     route = data[0]
     if route.get("type") == "local":
-        return _result(check, False, f"{check.target}가 이 노드 자신의 주소입니다", _text(out))
+        return _result(check, False, f"{check.target}가 이 노드 자신의 주소입니다", "")
     via = f"{route['gateway']} 경유" if route.get("gateway") else "직접 연결"
     return _result(check, True, f"{route.get('dev')}로 {via}", _text(out))
 
@@ -167,7 +174,7 @@ def _address(check: RenderedCheck, addresses: dict[str, list[str]] | None, out: 
 
 def _unique(expected: dict[str, Endpoint], addresses: dict[str, dict[str, list[str]] | None]) -> CheckResult:
     """검사가 가리키는 주소가 의도한 인터페이스에만 있는지. 다른 곳에 있으면 ping이 엉뚱한 곳에서 성공할 수 있다."""
-    description = "검사가 가리키는 주소가 의도한 인터페이스에만 있다"
+    description = UNIQUE_DESCRIPTION
     unreadable = sorted(node for node, a in addresses.items() if a is None)
     if unreadable:
         return CheckResult(UNIQUE_CHECK_ID, description, "unique", False,

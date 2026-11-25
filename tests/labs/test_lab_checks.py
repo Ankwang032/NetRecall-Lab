@@ -219,6 +219,10 @@ def test_router_route_failures(r1_route, message):
     runtime = lab_002_runtime(r1_route, fixture("l2_r2_route_kernel.out"), ok(fixture("l2_pc1_route_get_gw.out")))
     r = results(verify(runtime, lab_002()))["r1-route"]
     assert not r.passed and r.message == message
+    if message != "경로 조회 결과를 읽지 못했습니다":
+        assert r.output == ""  # 메시지와 같은 내용이라 붙이지 않는다. 예상 밖 출력은 그대로 보여 준다
+    else:
+        assert r.output == "% Unknown command"
 
 
 @pytest.mark.parametrize("pc1_route, message", [
@@ -228,7 +232,7 @@ def test_router_route_failures(r1_route, message):
 def test_host_route_failures(pc1_route, message):
     runtime = lab_002_runtime(fixture("l2_r1_route_static.out"), fixture("l2_r2_route_kernel.out"), pc1_route)
     r = results(verify(runtime, lab_002()))["pc1-route"]
-    assert not r.passed and r.message == message
+    assert not r.passed and r.message == message and r.output == ""
 
 
 def test_busybox_ping_without_reply_fails():

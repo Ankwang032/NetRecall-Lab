@@ -69,18 +69,20 @@ docker pull quay.io/frrouting/frr:10.7.1
 
 ```bash
 python -m backend.cli --env-file .env lab list
-python -m backend.cli --env-file .env lab start LAB-001   # 목표·대역·접속 명령을 보여 준다
+python -m backend.cli --env-file .env lab start LAB-001   # 목표·대역·접속 명령을 보여 준다 (--level easy|normal|hard)
 docker exec -it clab-nr-1-pc1 sh                          # 다른 터미널에서 직접 설정
 python -m backend.cli --env-file .env lab verify          # 검사별 결과. 통과하면 종료 코드 0
+python -m backend.cli --env-file .env lab hint 3          # 3번 검사의 힌트를 한 단계 더 (번호를 빼면 처음 실패한 검사)
 python -m backend.cli --env-file .env lab finish          # 정리
 ```
 
 API:
 
 - `GET /labs`: 실습 시나리오 목록 (`lab_scenarios/`)
-- `POST /labs/{id}/runs` (`{"evaluation_id": 3}`은 선택): 배포. 응답에 목표, 대역, 배포한 주소, 노드별 접속 명령. 진행 중인 실습이 있으면 409, 배포 실패는 502
+- `POST /labs/{id}/runs` (`{"evaluation_id": 3, "level": "normal"}` 모두 선택): 배포. `level`은 도움 수준으로 `easy`(힌트 3단계)·`normal`(2단계)·`hard`(힌트 없음, 끝낼 때까지 검사 목록·검사별 결과를 숨김). 응답에 목표, 대역, 배포한 주소, 노드별 접속 명령. 진행 중인 실습이 있으면 409, 배포 실패는 502
 - `GET /lab-runs/current`: 진행 중인 실습 (없으면 `null`), `GET /lab-runs/{id}`
 - `POST /lab-runs/{id}/attempts`: 검증. 검사별 통과 여부·이유·출력. 학습자에게 주지 않은 목표 주소는 `[pc1:eth1 목표 주소]`로 가린다
+- `POST /lab-runs/{id}/hints` (`{"check_id": "pc2-route"}`은 선택): 힌트를 한 단계 더 연다. 검사를 빼면 마지막 검증에서 처음 실패한 검사. 본 힌트는 기록에 남는다
 - `POST /lab-runs/{id}/finish`: 마지막 상태를 남기고 정리
 
 토폴로지 파일은 `NETRECALL_LAB_DIR`(기본 `~/.netrecall/labs`)에 생깁니다. 앱은 시작할 때 이 DB가 만든 실습 중 끝났는데 남은 컨테이너를 지웁니다.

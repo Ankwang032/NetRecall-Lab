@@ -70,3 +70,47 @@ def test_env_file(runtime, tmp_path, monkeypatch, capsys):
     assert (tmp_path / "from-env.db").exists()
     assert cli.main(["--env-file", str(env), "lab", "start", "LAB-001"]) == 0
     assert f"python -m backend.cli --env-file {env} lab verify" in capsys.readouterr().out  # 안내 명령도 같은 파일을 쓴다
+
+
+def test_hint_command(runtime, capsys):
+    assert cli.main(["lab", "start", "LAB-001"]) == 0
+    out = capsys.readouterr().out
+    assert "난이도: 보통 (힌트는 검사마다 2단계까지)" in out and "힌트    python -m backend.cli lab hint [검사 번호]" in out
+
+    for node in ("pc1", "pc2"):
+        runtime.responses[(node, ADDR)] = ExecResult(0, addr_json({"eth1": []}), "")
+    assert cli.main(["lab", "verify"]) == 1
+    assert "막히면 힌트: python -m backend.cli lab hint 1" in capsys.readouterr().out
+
+    assert cli.main(["lab", "hint"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("1. pc1 eth1에 대역의 첫 번째 사용 가능 주소가 있다 · 힌트 1/3")
+    assert "  1) 대역의 맨 처음 주소는 네트워크 주소" in out
+    assert cli.main(["lab", "hint", "2"]) == 0 and cli.main(["lab", "hint", "2"]) == 0
+    capsys.readouterr()
+    assert cli.main(["lab", "hint", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "힌트 2/3" in out and "  2) /27 대역의 크기는" in out
+    assert "더 볼 수 있는 힌트가 없습니다 (보통 난이도는 2단계까지)" in out
+    assert FIRST not in out and LAST not in out
+
+    assert cli.main(["lab", "hint", "9"]) == 2
+    assert "검사 번호는 1~5입니다" in capsys.readouterr().err
+    assert cli.main(["lab", "status"]) == 0
+    assert "검증 1번 · 힌트 3번" in capsys.readouterr().out
+
+
+def test_hard_level_shows_only_the_count(runtime, capsys):
+    assert cli.main(["lab", "start", "LAB-001", "--level", "hard"]) == 0
+    out = capsys.readouterr().out
+    assert "난이도: 어려움" in out and "끝낼 때까지 보여 주지 않습니다" in out
+    assert "pc1 eth1에 대역의" not in out and "lab hint" not in out
+
+    for node in ("pc1", "pc2"):
+        runtime.responses[(node, ADDR)] = ExecResult(0, addr_json({"eth1": []}), "")
+    assert cli.main(["lab", "verify"]) == 1
+    out = capsys.readouterr().out
+    assert "5개 중 1개 통과" in out and "X " not in out and "lab hint" not in out
+
+    assert cli.main(["lab", "hint"]) == 1
+    assert "어려움 난이도에서는 힌트가 없습니다" in capsys.readouterr().out

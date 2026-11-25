@@ -7,12 +7,12 @@ from sqlalchemy import select
 from backend.database import init_db, make_engine, make_session_factory
 from backend.models import LabAttempt, LabResult, LabRun
 from backend.services import lab_service as labs
-from backend.services.lab_checks import UNIQUE_CHECK_ID
+from backend.services.lab_checks import UNIQUE_CHECK_ID, UNIQUE_HINTS, ping_argv
 from backend.services.lab_preset import address_argv
 from backend.services.lab_scenario import parse_scenario, render
 from integrations.labs.base import Endpoint, ExecResult, LabRuntimeError
 from tests.fakes import FakeLabRuntime
-from tests.labs.lab_fixtures import FIRST, LAST, fixed_lab_001_text, solve_lab_001
+from tests.labs.lab_fixtures import FIRST, LAST, fixed_lab_001_text, fixture, solve_lab_001
 
 NOW = datetime(2026, 11, 24, 5, 0, tzinfo=UTC)
 PRESET_SCENARIO = b"""
@@ -260,3 +260,93 @@ def test_results_are_stored_per_check(session, scenario):
     stored = session.scalars(select(LabResult).where(LabResult.attempt_id == attempt.id)).all()
     assert len(stored) == 5 and not any(r.passed for r in stored[:4])
     assert session.scalar(select(LabAttempt.passed).where(LabAttempt.id == attempt.id)) is False
+
+
+# ---- 도움 수준과 힌트 ----
+
+def test_level_is_recorded_and_checked(session, scenario):
+    runtime = FakeLabRuntime()
+    with pytest.raises(labs.LabError, match="난이도는 easy, normal, hard"):
+        labs.start_run(session, runtime, scenario, NOW, level="expert")
+    assert labs.current_run(session) is None
+    run = labs.start_run(session, runtime, scenario, NOW, rng=random.Random(0), level="hard")
+    assert run.level == "hard"
+
+
+def test_hints_open_one_step_at_a_time_up_to_the_level_limit(session, scenario):
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, scenario)  # 기본은 normal: 2단계까지
+    opened = [labs.reveal_hint(session, runtime, run.id, None, NOW + timedelta(minutes=i)) for i in range(3)]
+    assert [h.check_id for h in opened] == ["pc1-address"] * 3  # 검증 전이면 첫 검사
+    assert [len(h.hints) for h in opened] == [1, 2, 2]
+    assert [h.new for h in opened] == [True, True, False]
+    assert (opened[-1].limit, opened[-1].total, opened[-1].number) == (2, 3, 1)
+    assert opened[0].hints[0].startswith("대역의 맨 처음 주소는 네트워크 주소")
+    assert "/27 대역의 크기는 2^(32−27)개입니다. 10.37.84.64/27의 시작 주소" in opened[1].hints[1]
+    assert labs.hints_used(session, run.id) == 2
+
+
+def test_easy_opens_all_steps_and_hard_has_no_hints(session, scenario):
+    runtime = FakeLabRuntime()
+    run = labs.start_run(session, runtime, scenario, NOW, rng=random.Random(0), level="easy")
+    for _ in range(4):
+        h = labs.reveal_hint(session, runtime, run.id, "pc2-address", NOW)
+    assert (len(h.hints), h.limit, h.new) == (3, 3, False)
+    labs.finish_run(session, runtime, run.id, NOW)
+
+    hard = labs.start_run(session, runtime, scenario, NOW, rng=random.Random(0), level="hard")
+    with pytest.raises(labs.HintsUnavailable, match="어려움 난이도에서는 힌트가 없습니다"):
+        labs.reveal_hint(session, runtime, hard.id, None, NOW)
+    assert labs.hints_used(session, hard.id) == 0
+
+
+def test_hint_follows_the_first_failed_check_of_the_last_verify(session, scenario):
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, scenario)
+    solve_lab_001(runtime)
+    for node, target in (("pc1", LAST), ("pc2", FIRST)):  # 주소는 맞지만 ping이 안 된다
+        runtime.responses[(node, tuple(ping_argv(target)))] = ExecResult(1, fixture("l1_ping_noreply.out"), "")
+    labs.verify_run(session, runtime, run.id, NOW)
+    h = labs.reveal_hint(session, runtime, run.id, None, NOW)
+    assert (h.check_id, h.number) == ("pc1-to-pc2", 3)
+
+    solve_lab_001(runtime)
+    labs.verify_run(session, runtime, run.id, NOW)
+    with pytest.raises(labs.HintsUnavailable, match="모든 검사를 통과했습니다"):
+        labs.reveal_hint(session, runtime, run.id, None, NOW)
+    assert labs.reveal_hint(session, runtime, run.id, "pc2-to-pc1", NOW).number == 4  # 골라서는 볼 수 있다
+
+
+def test_unique_check_has_built_in_hints_and_unknown_checks_fail(session, scenario):
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, scenario)
+    h = labs.reveal_hint(session, runtime, run.id, UNIQUE_CHECK_ID, NOW)
+    assert (h.number, h.hints) == (5, UNIQUE_HINTS[:1])
+    with pytest.raises(labs.CheckNotFound):
+        labs.reveal_hint(session, runtime, run.id, "nope", NOW)
+
+
+def test_hints_need_a_run_in_progress(session, scenario):
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, scenario)
+    labs.finish_run(session, runtime, run.id, NOW)
+    with pytest.raises(labs.RunNotActive):
+        labs.reveal_hint(session, runtime, run.id, None, NOW)
+
+
+def test_hint_text_is_redacted_too(session):
+    # 자리표시 검사를 피해 목표 주소를 글자로 적어도, 내보낼 때 가린다 (두 번째 방어선)
+    text = fixed_lab_001_text().replace("      - 대역의 맨 처음 주소는", f"      - {FIRST}가 답입니다. 대역의 맨 처음 주소는", 1)
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, parse_scenario(text.encode()))
+    h = labs.reveal_hint(session, runtime, run.id, None, NOW)
+    assert FIRST not in h.hints[0] and h.hints[0].startswith("[pc1:eth1 목표 주소]가 답입니다")
+
+
+def test_runs_recorded_before_hints_existed_still_load(session, scenario):
+    runtime = FakeLabRuntime()
+    run = start(session, runtime, scenario)
+    run.checks_json = {**run.checks_json, "checks": [{k: v for k, v in c.items() if k != "hints"}
+                                                      for c in run.checks_json["checks"]]}
+    session.commit()
+    assert all(c.hints == () for c in labs.rendered_lab(run).checks)

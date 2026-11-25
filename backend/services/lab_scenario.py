@@ -39,6 +39,7 @@ PRIVATE_POOLS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.
 ROUTE_PROTOCOLS = ("kernel", "connected", "local", "static", "ospf", "bgp", "rip", "isis")
 ROUTER_DEFAULT_PROTOCOLS = ("static", "kernel")  # vtysh로 넣으면 static, ip route add로 넣으면 kernel
 CHECK_KINDS = ("ping", "route", "address")
+MAX_HINTS = 3  # 검사마다 힌트는 1~3단계: 개념 질문 → 확인할 곳 → 할 일
 CHOOSE_ATTEMPTS = 100
 
 SCENARIO_KEYS = {
@@ -82,6 +83,7 @@ class Check:
     interface: str | None           # address: 인터페이스
     address: HostAddress | None     # address: 있어야 할 주소
     protocols: tuple[str, ...] | None  # route: 허용하는 프로토콜 (Linux 노드는 None)
+    hints: tuple[str, ...] = ()     # 단계별 힌트. {대역}·{대역.prefix}·{노드:인터페이스}(preset 주소)를 쓸 수 있다
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,7 @@ class RenderedCheck:
     target: str                      # ping·route: 목적지 주소, address: 주소/프리픽스
     interface: str | None = None     # address만
     protocols: tuple[str, ...] | None = None  # route만
+    hints: tuple[str, ...] = ()      # 값을 채운 힌트 (힌트가 생기기 전 실행 기록에는 없다)
 
 
 @dataclass(frozen=True)
@@ -214,6 +217,11 @@ def parse_scenario(raw: bytes) -> Scenario:
     for name in PLACEHOLDER_PATTERN.findall(goal):
         if name not in by_name:
             raise ScenarioError(f"goal: parameters에 없는 대역입니다: {{{name}}}")
+    given = {e for e, _ in preset_addresses}
+    for c in checks:
+        for hint in c.hints:
+            for name in PLACEHOLDER_PATTERN.findall(hint):
+                _hint_value(name, by_name, given, f"검사 {c.id}의 힌트")
 
     return Scenario(
         id=scenario_id, title=title.strip(), type=meta["type"], concepts=concepts,
@@ -303,8 +311,9 @@ def _checks(value: Any, kinds: dict[str, str], host_address, interface) -> tuple
         if len(present) != 1:
             raise ScenarioError(f"{where}: {', '.join(CHECK_KINDS)} 중 하나만 써야 합니다")
         kind = present[0]
-        _keys(item, {"id", "description", kind}, where)
+        _keys(item, {"id", "description", kind, "hints"}, where)
         description = _text(item.get("description"), f"{where}의 description").strip()
+        hints = _hints(item.get("hints", []), where)
         spec = _mapping(item[kind], f"{where}.{kind}")
 
         def node(key: str) -> str:
@@ -316,7 +325,7 @@ def _checks(value: Any, kinds: dict[str, str], host_address, interface) -> tuple
         if kind == "ping":
             _keys(spec, {"from", "to"}, where)
             check = Check(check_id, description, kind, node("from"), interface(spec.get("to"), where),
-                          None, None, None)
+                          None, None, None, hints)
         elif kind == "route":
             _keys(spec, {"node", "to", "protocol"}, where)
             at = node("node")
@@ -330,12 +339,13 @@ def _checks(value: Any, kinds: dict[str, str], host_address, interface) -> tuple
                 if not isinstance(protocols, list) or not protocols or any(p not in ROUTE_PROTOCOLS for p in protocols):
                     raise ScenarioError(f"{where}: protocol은 {', '.join(ROUTE_PROTOCOLS)} 중에서 고른 목록이어야 합니다")
                 protocols = tuple(dict.fromkeys(protocols))
-            check = Check(check_id, description, kind, at, interface(spec.get("to"), where), None, None, protocols)
+            check = Check(check_id, description, kind, at, interface(spec.get("to"), where), None, None, protocols,
+                          hints)
         else:
             _keys(spec, {"interface", "address"}, where)
             endpoint = interface(spec.get("interface"), where)
             check = Check(check_id, description, kind, endpoint.node, None, endpoint.interface,
-                          host_address(spec.get("address"), where), None)
+                          host_address(spec.get("address"), where), None, hints)
         checks.append(check)
     return tuple(checks)
 
@@ -373,16 +383,30 @@ def render(scenario: Scenario, run_id: int, rng: random.Random | None = None) ->
     by_endpoint: dict[Endpoint, HostAddress] = dict(scenario.preset_addresses)
     by_endpoint.update({Endpoint(c.node, c.interface): c.address for c in scenario.checks if c.kind == "address"})
 
+    preset = dict(scenario.preset_addresses)
+
+    def hint_text(text: str) -> str:
+        def value(m: re.Match) -> str:
+            name = m.group(1)
+            if name in networks:
+                return str(networks[name])
+            if name.endswith(".prefix"):
+                return str(networks[name.removesuffix(".prefix")].prefixlen)
+            return str(address(preset[_endpoint(name, "힌트")]))
+        return PLACEHOLDER_PATTERN.sub(value, text)
+
     checks: list[RenderedCheck] = []
     expected: dict[str, Endpoint] = {}
     for c in scenario.checks:
+        hints = tuple(hint_text(h) for h in c.hints)
         if c.kind == "address":
             endpoint = Endpoint(c.node, c.interface)
-            checks.append(RenderedCheck(c.id, c.description, c.kind, c.node, with_prefix(c.address), c.interface))
+            checks.append(RenderedCheck(c.id, c.description, c.kind, c.node, with_prefix(c.address), c.interface,
+                                        hints=hints))
         else:
             endpoint = c.target
             checks.append(RenderedCheck(c.id, c.description, c.kind, c.node, str(address(by_endpoint[endpoint])),
-                                        protocols=c.protocols))
+                                        protocols=c.protocols, hints=hints))
         expected[str(address(by_endpoint[endpoint]))] = endpoint
 
     goal = PLACEHOLDER_PATTERN.sub(lambda m: str(networks[m.group(1)]), scenario.goal)
@@ -438,6 +462,29 @@ def _text(value: Any, where: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ScenarioError(f"{where}가 비어 있습니다")
     return value
+
+
+def _hints(value: Any, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > MAX_HINTS:
+        raise ScenarioError(f"{where}: hints는 글 {MAX_HINTS}개 이하의 목록이어야 합니다")
+    for h in value:
+        if not isinstance(h, str):  # YAML은 따옴표 없는 `- {lan1} ...`을 글이 아니라 사전으로 읽는다
+            raise ScenarioError(f"{where}: 힌트는 글이어야 합니다. {{로 시작하는 힌트는 따옴표로 감싸세요")
+    return tuple(_text(h, f"{where}의 힌트").strip() for h in value)
+
+
+def _hint_value(name: str, parameters: dict[str, Parameter], given: set[Endpoint], where: str) -> None:
+    """힌트에는 학습자가 이미 받은 값만 쓴다: 대역, 대역의 프리픽스 길이, preset으로 넣은 인터페이스 주소.
+
+    address 검사가 정하는 목표 주소(LAB-001의 첫·마지막 주소처럼 학습자가 계산할 값)는 쓸 수 없다.
+    """
+    if name in parameters or (name.endswith(".prefix") and name.removesuffix(".prefix") in parameters):
+        return
+    m = ENDPOINT_PATTERN.match(name)
+    if m is None:
+        raise ScenarioError(f"{where}: 모르는 자리표시입니다: {{{name}}} ({{대역}}, {{대역.prefix}}, {{노드:인터페이스}}만)")
+    if Endpoint(m.group(1), m.group(2)) not in given:
+        raise ScenarioError(f"{where}: {{{name}}}는 preset으로 넣은 주소가 아니라 쓸 수 없습니다 (정답이 새지 않게)")
 
 
 def _concepts(value: Any) -> tuple[str, ...]:

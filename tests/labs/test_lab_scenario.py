@@ -58,9 +58,25 @@ def parse(text: str):
 
 def test_repo_scenarios_all_load():
     dirs = sorted(p for p in ROOT.iterdir() if p.is_dir())
-    assert [d.name for d in dirs] == ["LAB-001"]
+    assert [d.name for d in dirs] == ["LAB-001", "LAB-002"]
     for d in dirs:
-        load_scenario(d)
+        scenario = load_scenario(d)
+        assert all(len(c.hints) == 3 for c in scenario.checks), f"{d.name}: 검사마다 힌트 3단계"
+
+
+def test_lab_002_renders_routers_between_two_lans():
+    lab = render(load_scenario(ROOT / "LAB-002"), 8, random.Random(2))
+    nets = {name: ipaddress.IPv4Network(n) for name, n in lab.networks.items()}
+    assert [n.prefixlen for n in nets.values()] == [24, 24, 30]
+    assert not any(a.overlaps(b) for a in nets.values() for b in nets.values() if a is not b)
+    preset = {str(e): a for e, a in lab.preset_addresses}
+    assert preset["r1:eth2"] == f"{nets['transit'].network_address + 1}/30"
+    assert preset["r2:eth2"] == f"{nets['transit'].network_address + 2}/30"
+    assert preset["pc2:eth1"] == f"{nets['lan2'].network_address + 10}/24"
+    checks = {c.id: c for c in lab.checks}
+    assert checks["r1-route"].protocols == ("static", "kernel")  # 라우터 기본값: 직접 넣은 정적 경로만
+    assert checks["pc1-route"].protocols is None and checks["pc1-route"].target == str(nets["lan2"].network_address + 10)
+    assert str(nets["lan1"]) in lab.goal and str(nets["transit"]) in lab.goal
 
 
 def test_lab_001_renders_first_and_last_usable_address():
@@ -170,6 +186,58 @@ def test_invalid_scenarios(old, new, message):
     assert old in LAB_002_LIKE
     with pytest.raises(ScenarioError, match=message):
         parse(LAB_002_LIKE.replace(old, new, 1))
+
+
+HINTED = LAB_002_LIKE.replace("""    route: {node: r1, to: pc2:eth1}
+""", """    route: {node: r1, to: pc2:eth1}
+    hints:
+      - R1은 {lan2}를 모릅니다
+      - R1에서 show ip route를 보세요 (/{transit.prefix} 대역 너머)
+      - 다음 홉은 R2의 {r2:eth2}입니다
+""", 1)
+
+
+def test_hints_are_filled_with_the_run_values():
+    lab = render(parse(HINTED), 1, random.Random(0))
+    nets = {k: ipaddress.IPv4Network(v) for k, v in lab.networks.items()}
+    hints = {c.id: c.hints for c in lab.checks}
+    assert hints["r1-route"] == (
+        f"R1은 {nets['lan2']}를 모릅니다",
+        "R1에서 show ip route를 보세요 (/30 대역 너머)",
+        f"다음 홉은 R2의 {nets['transit'].network_address + 2}입니다",  # 프리픽스 없이 주소만
+    )
+    assert hints["pc1-to-pc2"] == ()  # 힌트는 선택
+
+
+@pytest.mark.parametrize("old, new, message", [
+    ("다음 홉은 R2의 {r2:eth2}입니다", "다음 홉은 R2의 {r2:eth9}입니다", "preset으로 넣은 주소가 아니라"),
+    ("다음 홉은 R2의 {r2:eth2}입니다", "다음 홉은 {lan2.host(1)}", "모르는 자리표시"),
+    ("다음 홉은 R2의 {r2:eth2}입니다", "다음 홉은 {lan9}", "모르는 자리표시"),
+    ("다음 홉은 R2의 {r2:eth2}입니다", "{r2:eth2}", "따옴표로 감싸세요"),  # YAML이 사전으로 읽는다
+    ("다음 홉은 R2의 {r2:eth2}입니다", "{r2:eth2}가 다음 홉", "(?s)YAML을 읽지 못했습니다.*line 38"),  # 줄을 알려 준다
+    ("다음 홉은 R2의 {r2:eth2}입니다", "'{r2:eth2}가 다음 홉'", "^$NEVER"),  # 따옴표로 감싸면 된다
+    ("다음 홉은 R2의 {r2:eth2}입니다", "''", "힌트가 비어"),
+    ("      - 다음 홉은 R2의 {r2:eth2}입니다\n", "      - 다음 홉은 R2의 {r2:eth2}입니다\n      - 넷째\n",
+     "3개 이하"),
+])
+def test_invalid_hints(old, new, message):
+    assert old.replace("\\n", "\n") in HINTED
+    text = HINTED.replace(old.replace("\\n", "\n"), new.replace("\\n", "\n"), 1)
+    if message == "^$NEVER":
+        parse(text)
+        return
+    with pytest.raises(ScenarioError, match=message):
+        parse(text)
+
+
+def test_hints_cannot_name_a_target_address_the_learner_must_work_out():
+    # LAB-001의 목표 주소는 address 검사가 정하고 preset에 없다. 힌트가 그 주소를 쓰면 정답이 샌다
+    text = (ROOT / "LAB-001" / "scenario.yaml").read_text()
+    hint = "      - 두 노드가 라우터 없이"
+    assert hint in text
+    text = text.replace(hint, "      - 상대 주소는 {pc2:eth1}입니다. 두 노드가 라우터 없이", 1)
+    with pytest.raises(ScenarioError, match="preset으로 넣은 주소가 아니라"):
+        parse(text)
 
 
 def test_target_needs_an_address():

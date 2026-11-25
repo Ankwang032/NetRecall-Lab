@@ -34,7 +34,7 @@ def test_list_labs(client):
 
 def test_repo_scenarios_are_served_by_default(tmp_path):
     client = TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}", tmp_path, lab_runtime=FakeLabRuntime()))
-    assert [s["id"] for s in client.get("/labs").json()["scenarios"]] == ["LAB-001"]
+    assert [s["id"] for s in client.get("/labs").json()["scenarios"]] == ["LAB-001", "LAB-002"]
 
 
 def test_full_run(client, runtime):
@@ -137,3 +137,43 @@ def test_startup_survives_missing_docker(tmp_path):
     runtime.list_runs = broken
     with TestClient(create_app(f"sqlite:///{tmp_path / 'api.db'}", tmp_path, lab_runtime=runtime)) as client:
         assert client.get("/health").status_code == 200
+
+
+def test_hints(client, runtime):
+    run = client.post("/labs/LAB-001/runs").json()
+    assert (run["level"], run["hint_limit"], run["hints_used"]) == ("normal", 2, 0)
+
+    first = client.post("/lab-runs/1/hints")  # 본문 없이: 검증 전이면 첫 검사
+    assert first.status_code == 200
+    assert {k: first.json()[k] for k in ("check_id", "number", "new", "limit", "total")} == \
+        {"check_id": "pc1-address", "number": 1, "new": True, "limit": 2, "total": 3}
+    assert len(first.json()["hints"]) == 1
+    second = client.post("/lab-runs/1/hints", json={"check_id": "pc1-address"}).json()
+    third = client.post("/lab-runs/1/hints", json={"check_id": "pc1-address"}).json()
+    assert (len(second["hints"]), second["new"], len(third["hints"]), third["new"]) == (2, True, 2, False)
+    assert FIRST not in str(third)
+    assert client.get("/lab-runs/1").json()["hints_used"] == 2
+
+    assert client.post("/lab-runs/1/hints", json={"check_id": "nope"}).status_code == 404
+    assert client.post("/lab-runs/9/hints").status_code == 404
+    client.post("/lab-runs/1/finish")
+    assert client.post("/lab-runs/1/hints").status_code == 409
+
+
+def test_hard_level_hides_checks_and_results_until_finished(client, runtime):
+    run = client.post("/labs/LAB-001/runs", json={"level": "hard"}).json()
+    assert (run["level"], run["hint_limit"], run["checks"]) == ("hard", 0, [])
+    res = client.post("/lab-runs/1/hints")
+    assert res.status_code == 409 and "어려움 난이도에서는 힌트가 없습니다" in res.json()["detail"]
+
+    for node in ("pc1", "pc2"):
+        runtime.responses[(node, ADDR)] = ExecResult(0, addr_json({"eth1": []}), "")
+    attempt = client.post("/lab-runs/1/attempts").json()
+    assert (attempt["passed"], attempt["passed_count"], attempt["total_count"], attempt["results"]) == (False, 1, 5, [])
+
+    finished = client.post("/lab-runs/1/finish").json()
+    assert [c["id"] for c in finished["checks"]] == ["pc1-address", "pc2-address", "pc1-to-pc2", "pc2-to-pc1"]
+
+
+def test_level_must_be_known(client):
+    assert client.post("/labs/LAB-001/runs", json={"level": "expert"}).status_code == 422

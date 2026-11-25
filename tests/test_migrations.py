@@ -81,3 +81,22 @@ def test_upgrade_from_0003_marks_existing_questions_as_variant(tmp_path):
     with engine.connect() as conn:
         assert conn.execute(text("SELECT kind, question FROM questions")).one() == ("variant", "V")
     engine.dispose()
+
+
+def test_upgrade_from_0005_keeps_lab_runs_at_normal_level(tmp_path):
+    engine = make_engine(f"sqlite:///{tmp_path / 'm.db'}")
+    config = alembic_config()
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.upgrade(config, "0005")
+        conn.execute(text(
+            "INSERT INTO lab_runs (id, scenario_id, scenario_hash, mode, status, params_json, topology_json,"
+            " checks_json, goal, image_digests_json, containerlab_version, started_at, expires_at) VALUES"
+            " (1, 'LAB-001', 'h', 'build', 'passed', '{}', '{}', '{}', '목표', '{}', '0.83.0',"
+            " '2026-11-24 14:55:54', '2026-11-24 15:55:54')"
+        ))
+    init_db(engine)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT status, level FROM lab_runs")).one() == ("passed", "normal")
+        assert conn.execute(text("SELECT count(*) FROM lab_hints")).scalar_one() == 0
+    engine.dispose()

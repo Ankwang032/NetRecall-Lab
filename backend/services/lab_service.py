@@ -10,21 +10,24 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.models import AnswerEvaluation, LabAttempt, LabResult, LabRun
+from backend.models import AnswerEvaluation, LabAttempt, LabHint, LabResult, LabRun
 from integrations.labs.base import Endpoint, LabRuntime, LabRuntimeError, RenderedTopology, TopologyLink, TopologyNode
 
-from .lab_checks import CommandOutput, collect_state, verify
+from .lab_checks import UNIQUE_CHECK_ID, UNIQUE_DESCRIPTION, UNIQUE_HINTS, CommandOutput, collect_state, verify
 from .lab_preset import apply_preset
 from .lab_scenario import SCENARIO_FILE, RenderedCheck, RenderedLab, Scenario, ScenarioError, load_scenario, render
 
 LIVE = ("deploying", "active", "passed")  # 환경이 있을 수 있는 상태 (destroyed_at이 없을 때)
+# 도움 수준 → 검사마다 볼 수 있는 힌트 단계 수. hard는 힌트가 없고, 끝낼 때까지 검사 목록·검사별 결과도 숨긴다
+LEVELS = {"easy": 3, "normal": 2, "hard": 0}
+LEVEL_NAMES = {"easy": "쉬움", "normal": "보통", "hard": "어려움"}
 
 
 class LabError(Exception):
@@ -50,6 +53,14 @@ class RunInProgress(LabError):
 
 
 class RunNotActive(LabError):
+    pass
+
+
+class HintsUnavailable(LabError):
+    pass
+
+
+class CheckNotFound(LabError):
     pass
 
 
@@ -96,8 +107,10 @@ def get_run(session: Session, run_id: int) -> LabRun:
 
 
 def start_run(session: Session, runtime: LabRuntime, scenario: Scenario, now: datetime,
-              evaluation_id: int | None = None, rng: random.Random | None = None) -> LabRun:
+              evaluation_id: int | None = None, rng: random.Random | None = None, level: str = "normal") -> LabRun:
     """대역을 고르고 배포한 뒤 preset을 넣는다. 배포가 실패하면 deploy_failed로 남기고 DeployFailed."""
+    if level not in LEVELS:
+        raise LabError(f"난이도는 {', '.join(LEVELS)} 중 하나입니다: {level}")
     active = current_run(session)
     if active is not None:
         raise RunInProgress(active.id)
@@ -106,7 +119,7 @@ def start_run(session: Session, runtime: LabRuntime, scenario: Scenario, now: da
 
     run = LabRun(
         scenario_id=scenario.id, scenario_hash=scenario.source_hash, evaluation_id=evaluation_id,
-        mode=scenario.type, status="deploying", params_json={}, topology_json={}, checks_json={}, goal="",
+        mode=scenario.type, status="deploying", level=level, params_json={}, topology_json={}, checks_json={}, goal="",
         image_digests_json={}, containerlab_version="", started_at=now,
         expires_at=now + timedelta(minutes=scenario.time_limit_minutes),
     )
@@ -152,6 +165,78 @@ def verify_run(session: Session, runtime: LabRuntime, run_id: int, now: datetime
         run.status = "passed"
     session.commit()
     return attempt
+
+
+# ---- 힌트 ----
+
+@dataclass(frozen=True)
+class HintReveal:
+    check_id: str
+    number: int               # 검증 결과의 번호 (1부터, 주소 유일성 자동 검사가 마지막)
+    description: str
+    hints: tuple[str, ...]    # 지금까지 연 힌트 (목표 주소는 가림)
+    new: bool                 # 이번에 새 단계를 열었는가
+    limit: int                # 이 난이도에서 볼 수 있는 단계 수
+    total: int                # 검사의 힌트 수
+
+
+def numbered_checks(lab: RenderedLab) -> list[tuple[str, str, tuple[str, ...]]]:
+    """(검사 id, 설명, 힌트)를 검증 결과와 같은 순서로. 주소 유일성 자동 검사가 마지막이다."""
+    return [(c.id, c.description, c.hints) for c in lab.checks] + [(UNIQUE_CHECK_ID, UNIQUE_DESCRIPTION, UNIQUE_HINTS)]
+
+
+def reveal_hint(session: Session, runtime: LabRuntime, run_id: int, check_id: str | None, now: datetime) -> HintReveal:
+    """그 검사의 힌트를 한 단계 더 연다. 이 난이도에서 볼 수 있는 단계를 다 봤으면 본 것만 다시 돌려준다.
+
+    검사를 고르지 않으면 마지막 검증에서 처음 실패한 검사(힌트가 있는 것), 검증한 적이 없으면 첫 검사다.
+    """
+    run = get_run(session, run_id)
+    expire_overdue(session, runtime, now)
+    if run.status not in ("active", "passed") or run.destroyed_at is not None:
+        raise RunNotActive(_not_active_reason(run))
+    if LEVELS[run.level] == 0:
+        raise HintsUnavailable(f"{LEVEL_NAMES[run.level]} 난이도에서는 힌트가 없습니다")
+    lab = rendered_lab(run)
+    checks = numbered_checks(lab)
+    if check_id is None:
+        check_id = _hint_target(session, run.id, checks)
+    found = next(((i, c) for i, c in enumerate(checks, 1) if c[0] == check_id), None)
+    if found is None:
+        raise CheckNotFound(f"검사가 없습니다: {check_id}")
+    number, (_, description, hints) = found
+    if not hints:
+        raise HintsUnavailable(f"{number}번 검사에는 힌트가 없습니다")
+    limit = min(LEVELS[run.level], len(hints))
+    seen = session.scalar(select(func.count()).select_from(LabHint)
+                          .where(LabHint.run_id == run.id, LabHint.check_id == check_id))
+    new = seen < limit
+    if new:
+        seen += 1
+        session.add(LabHint(run_id=run.id, check_id=check_id, step=seen, shown_at=now))
+        session.commit()
+    hidden = hidden_addresses(lab)
+    return HintReveal(check_id, number, description, tuple(redact(h, hidden) for h in hints[:seen]), new, limit,
+                      len(hints))
+
+
+def hints_used(session: Session, run_id: int) -> int:
+    return session.scalar(select(func.count()).select_from(LabHint).where(LabHint.run_id == run_id))
+
+
+def _hint_target(session: Session, run_id: int, checks: list[tuple[str, str, tuple[str, ...]]]) -> str:
+    with_hints = [c[0] for c in checks if c[2]]
+    if not with_hints:
+        raise HintsUnavailable("이 실습에는 힌트가 없습니다")
+    verified = [a for a in attempts_of(session, run_id) if a.kind == "verify"]
+    if not verified:
+        return with_hints[0]
+    if verified[-1].passed:
+        raise HintsUnavailable("마지막 검증에서 모든 검사를 통과했습니다. 다른 검사의 힌트는 검사를 골라 보세요")
+    failed = [r.check_id for r in results_of(session, verified[-1].id) if not r.passed]
+    target = next((c for c in failed if c in with_hints), None)
+    if target is None:
+        raise HintsUnavailable("실패한 검사에 힌트가 없습니다")
+    return target
 
 
 def finish_run(session: Session, runtime: LabRuntime, run_id: int, now: datetime) -> LabRun:
@@ -230,7 +315,8 @@ def rendered_lab(run: LabRun) -> RenderedLab:
         expected_addresses={ip: _endpoint(e) for ip, e in checks["expected_addresses"].items()},
         goal=run.goal,
         checks=tuple(
-            RenderedCheck(**{**c, "protocols": tuple(c["protocols"]) if c["protocols"] is not None else None})
+            RenderedCheck(**{**c, "protocols": tuple(c["protocols"]) if c["protocols"] is not None else None,
+                             "hints": tuple(c.get("hints", ()))})  # 힌트가 생기기 전(0006 이전) 실행에는 없다
             for c in checks["checks"]
         ),
         time_limit_minutes=int((_aware(run.expires_at) - _aware(run.started_at)).total_seconds() // 60),
