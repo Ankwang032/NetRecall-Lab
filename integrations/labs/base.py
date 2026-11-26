@@ -71,3 +71,5 @@ class LabRuntime(Protocol):
     def list_runs(self) -> list[str]: ...  # 남은 실습 정리용
 
     def describe(self) -> RuntimeInfo: ...  # 재현성 기록: 실행 환경 버전과 노드 종류별 이미지
+
+    def terminal_argv(self, run_name: str, node: str, shell: str) -> list[str]: ...  # 웹 터미널용 대화형 명령 (PTY로 실행)

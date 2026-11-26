@@ -93,7 +93,7 @@ export function LabsPage() {
       )}
 
       {run ? (
-        <LabRunView run={run} onChange={changed} onRestart={restart} onClose={() => setRun(null)} />
+        <LabRunView key={run.run_id} run={run} onChange={changed} onRestart={restart} onClose={() => setRun(null)} />
       ) : (
         <ScenarioList list={list} loading={!list && !error} onStart={setStarting} />
       )}

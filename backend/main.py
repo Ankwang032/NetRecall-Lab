@@ -15,12 +15,14 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.assessments import router as assessments_router
 from backend.api.concepts import router as concepts_router
+from backend.api.lab_terminal import router as lab_terminal_router
 from backend.api.labs import router as labs_router
 from backend.api.notion import router as notion_router
 from backend.api.reviews import router as reviews_router
 from backend.database import init_db, make_engine, make_session_factory
 from backend.models.concept import utcnow
 from backend.services.lab_service import cleanup_orphans
+from backend.services.lab_terminal import Tickets
 from integrations.labs.base import LabRuntime, LabRuntimeError
 from integrations.labs.containerlab.runtime import containerlab_from_env
 from integrations.llm import LLMClient
@@ -74,6 +76,9 @@ def create_app(
     # 실습 실행 환경. 만들 때는 아무것도 실행하지 않는다
     app.state.lab_runtime = lab_runtime or containerlab_from_env()
     app.state.scenarios_dir = Path(scenarios_dir or DEFAULT_SCENARIOS_DIR)
+    # 웹 터미널: 1회용 발급표와 열린 터미널 수 (프로세스 메모리)
+    app.state.terminal_tickets = Tickets()
+    app.state.terminal_count = 0
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -84,6 +89,7 @@ def create_app(
     app.include_router(assessments_router)
     app.include_router(notion_router)
     app.include_router(labs_router)
+    app.include_router(lab_terminal_router)
 
     # 빌드된 UI(frontend에서 npm run build)가 있으면 /에서 보여 준다. 위 API 경로가 먼저 매칭된다
     ui_dir = Path(frontend_dir or DEFAULT_FRONTEND_DIR)

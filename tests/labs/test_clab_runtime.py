@@ -67,6 +67,17 @@ def test_names_are_checked_before_running(monkeypatch, run_name, node):
     assert fake.calls == []
 
 
+def test_terminal_command_is_the_learner_connect_command():
+    assert ContainerlabRuntime("/tmp/x").terminal_argv("nr-5", "r1", "vtysh") == \
+        ["docker", "exec", "-it", "clab-nr-5-r1", "vtysh"]
+
+
+@pytest.mark.parametrize("run_name, node, shell", [("lab-5", "pc1", "sh"), ("nr-5", "pc1;id", "sh"), ("nr-5", "pc1", "bash")])
+def test_terminal_command_checks_names_and_shell(run_name, node, shell):
+    with pytest.raises(LabRuntimeError):
+        ContainerlabRuntime("/tmp/x").terminal_argv(run_name, node, shell)
+
+
 def test_deploy_writes_checked_topology_and_prepares_routers(monkeypatch, tmp_path):
     fake = FakeProcesses(monkeypatch, [
         (["docker", "exec", "clab-nr-5-r1", "vtysh"], (0, '{"0.0.0.0/0":[]}', "")),

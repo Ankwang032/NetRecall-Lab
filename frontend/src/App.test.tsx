@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 
+// xterm은 jsdom에서 그릴 수 없다. 터미널 탭 동작만 본다 (연결은 서버 테스트와 실제 확인에서)
+vi.mock("@/components/LabTerminal", () => ({
+  default: ({ node, shell, active }: { node: string; shell: string; active: boolean }) => (
+    <p>{`터미널 ${node} ${shell}${active ? " (보는 중)" : ""}`}</p>
+  ),
+}));
+
 const CARD = {
   card_id: 7,
   concept_id: "NET-010",
@@ -564,7 +571,7 @@ test("사이드바로 실습 목록을 열고, 도움 수준을 골라 시작하
   expect(await screen.findByRole("heading", { name: RUN.title })).toBeTruthy();
   expect(calls.find((c) => c.route === "POST /labs/LAB-002/runs")?.body).toEqual({ level: "easy" });
   expect(screen.getByText("172.16.0.0/30")).toBeTruthy();
-  expect(screen.getByRole("img", { name: /토폴로지: pc1:eth1 — r1:eth1, r1:eth2 — r2:eth2, pc1:eth1 10.1.2.10\/24/ })).toBeTruthy();
+  expect(screen.getByRole("group", { name: /토폴로지: pc1:eth1 — r1:eth1, r1:eth2 — r2:eth2, pc1:eth1 10.1.2.10\/24/ })).toBeTruthy();
   expect(screen.getByText(/남은 시간/)).toBeTruthy();
   expect(screen.getAllByText("검증 전")).toHaveLength(2);
 
@@ -696,4 +703,30 @@ test("진행 중인 실습이 있으면 추천 실습을 바로 시작하지 않
   expect(await screen.findByText(/진행 중인 실습이 있어 추천 실습 LAB-001을\(를\) 바로 시작하지 않았습니다/)).toBeTruthy();
   expect(screen.getByRole("heading", { name: RUN.title })).toBeTruthy();
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+test("터미널은 노드 버튼이나 토폴로지 노드를 눌러 열고, 탭으로 오가며 닫을 수 있다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, RUN],
+    "GET /labs": () => [200, LAB_LIST],
+  });
+  const user = userEvent.setup();
+  openLabs();
+
+  const openers = await screen.findByRole("group", { name: "터미널 열기" });
+  expect(within(openers).getAllByRole("button").map((b) => b.textContent)).toEqual(["pc1", "r1", "r1 (sh)", "r2", "r2 (sh)"]);
+  await user.click(within(openers).getByRole("button", { name: "pc1" }));
+  expect(await screen.findByText("터미널 pc1 sh (보는 중)")).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "r1 터미널 열기" })); // 토폴로지 그림의 노드
+  expect(await screen.findByText("터미널 r1 vtysh (보는 중)")).toBeTruthy();
+  expect(screen.getByText("터미널 pc1 sh").closest("[hidden]")).toBeTruthy(); // 연결은 유지하고 숨긴다
+
+  await user.click(within(openers).getByRole("button", { name: "r1" })); // 이미 연 터미널은 새로 열지 않는다
+  expect(screen.getAllByText(/^터미널 r1 vtysh/)).toHaveLength(1);
+
+  await user.click(screen.getByRole("button", { name: "r1 터미널 닫기" }));
+  expect(screen.queryByText(/^터미널 r1/)).toBeNull();
+  expect(screen.getByText("터미널 pc1 sh (보는 중)")).toBeTruthy();
 });

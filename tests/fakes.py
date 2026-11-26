@@ -32,6 +32,8 @@ class FakeLabRuntime:
         self.responses = dict(responses or {})
         self.calls: list[tuple[str, str, tuple[str, ...]]] = []
         self.deployed: dict[str, RenderedTopology] = {}
+        self.terminals: list[tuple[str, str, str]] = []
+        self.terminal_command = ["cat"]  # 웹 터미널 테스트: PTY에서 입력을 그대로 돌려준다
 
     def deploy(self, run_name: str, topology: RenderedTopology) -> None:
         self.deployed[run_name] = topology
@@ -48,6 +50,10 @@ class FakeLabRuntime:
 
     def list_runs(self) -> list[str]:
         return sorted(self.deployed)
+
+    def terminal_argv(self, run_name: str, node: str, shell: str) -> list[str]:
+        self.terminals.append((run_name, node, shell))
+        return list(self.terminal_command)
 
     def describe(self) -> RuntimeInfo:
         return RuntimeInfo("fake 1.0", {"host": {"image": "fake/host:1", "id": "sha256:host"},

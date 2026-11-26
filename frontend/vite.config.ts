@@ -10,6 +10,7 @@ const apiPaths = ["/health", "/sync", "/concepts", "/reviews", "/cards", "/quest
 // 화면 경로(/labs 등)는 API 경로와 겹친다. 주소창으로 연 요청(Accept: text/html)은 넘기지 않고 화면을 준다
 const proxy = {
   target: backend,
+  ws: true, // 실습 웹 터미널 (/lab-runs/{id}/terminal)
   bypass: (req: { headers: { accept?: string } }) => (req.headers.accept?.includes("text/html") ? "/index.html" : undefined),
 };
 

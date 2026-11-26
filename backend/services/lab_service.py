@@ -384,6 +384,15 @@ def _close(session: Session, runtime: LabRuntime, run: LabRun, now: datetime, un
     session.commit()
 
 
+def live_run(session: Session, runtime: LabRuntime, run_id: int, now: datetime) -> LabRun:
+    """환경이 남아 있어 접속·설정할 수 있는 실행. 시간 제한이 지났으면 정리한 뒤 RunNotActive."""
+    run = get_run(session, run_id)
+    expire_overdue(session, runtime, now)
+    if run.status not in ("active", "passed") or run.destroyed_at is not None:
+        raise RunNotActive(_not_active_reason(run))
+    return run
+
+
 def _not_active_reason(run: LabRun) -> str:
     reasons = {
         "expired": "시간 제한이 지나 정리한 실습입니다",

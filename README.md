@@ -21,7 +21,7 @@ uvicorn backend.main:create_app --factory --reload --env-file .env
 - 화면: http://127.0.0.1:8000/ (Codespaces는 포트 탭의 8000번 주소). UI를 빌드하지 않았으면 `/`는 404입니다
   - 학습: 원래 질문에 답 → AI 평가 → (필요하면) AI 변형 질문에 한 번 더 답 → 등급 선택 → 다음 카드
   - 개념 추가: .md 파일을 끌어다 놓으면 형식을 검사하고, 모두 통과하면 개념 폴더에 저장한 뒤 동기화합니다
-  - 실습(`/labs`): 아래 "실습" 절의 준비가 필요합니다. 도움 수준을 골라 시작 → 접속 명령을 자기 터미널에서 실행해 설정 → 검증·힌트 → 끝내기
+  - 실습(`/labs`): 아래 "실습" 절의 준비가 필요합니다. 도움 수준을 골라 시작 → 화면 안 터미널이나 자기 터미널에서 노드에 접속해 설정 → 검증·힌트 → 끝내기
   - 화면 경로(`/labs` 등)는 API 경로와 겹칩니다. 브라우저 주소창으로 열면(Accept: text/html) 화면을, 화면의 요청에는 API 응답을 줍니다
 - UI를 고칠 때는 `cd frontend && npm run dev`로 Vite 서버(5173번)를 띄우면 저장하자마자 반영됩니다. API 요청은 8000번 FastAPI로 넘어갑니다
 - UI는 React + TypeScript + Tailwind CSS + shadcn/ui(Radix)입니다. 컴포넌트는 `npx shadcn@latest add <이름>`으로 추가합니다 (`frontend/components.json`)
@@ -86,6 +86,10 @@ API:
 - `POST /lab-runs/{id}/attempts`: 검증. 검사별 통과 여부·이유·출력. 학습자에게 주지 않은 목표 주소는 `[pc1:eth1 목표 주소]`로 가린다
 - `POST /lab-runs/{id}/hints` (`{"check_id": "pc2-route"}`은 선택): 힌트를 한 단계 더 연다. 검사를 빼면 마지막 검증에서 처음 실패한 검사. 본 힌트는 기록에 남는다
 - `POST /lab-runs/{id}/finish`: 마지막 상태를 남기고 정리
+- `POST /lab-runs/{id}/terminal-tickets` (`{"node": "r1", "shell": "vtysh"}`, `shell`은 선택): 웹 터미널 발급표(30초, 1회용). Linux 노드는 `sh`, 라우터는 `vtysh`(기본)·`sh`
+- WebSocket `/lab-runs/{id}/terminal?ticket=...`: 웹 터미널. 서버가 노드 접속 명령(`docker exec -it ...`)을 PTY에서 실행한다. Origin이 이 서버 주소가 아니거나 발급표가 맞지 않거나 끝난 실습이면 거절한다. 시간 제한이 되면 닫는다
+
+웹 터미널: 실습 화면에서 노드 버튼이나 토폴로지 그림의 노드를 누르면 화면 안에 터미널이 열립니다. 자기 터미널에서 접속 명령을 쳐도 같은 노드에 붙습니다. 서버는 `127.0.0.1`에만 띄우고, Codespaces에서는 포트를 Public으로 바꾸지 마세요(설계서 §D-8).
 
 토폴로지 파일은 `NETRECALL_LAB_DIR`(기본 `~/.netrecall/labs`)에 생깁니다. 앱은 시작할 때 이 DB가 만든 실습 중 끝났는데 남은 컨테이너를 지웁니다.
 

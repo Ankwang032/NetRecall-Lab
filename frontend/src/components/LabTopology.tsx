@@ -1,4 +1,6 @@
+import type { KeyboardEvent } from "react";
 import type { LabRun } from "@/api";
+import { cn } from "@/lib/utils";
 
 // 읽기 전용 토폴로지 그림. 노드를 받은 순서대로 한 줄에 놓고, 이웃한 노드의 링크는 직선,
 // 떨어진 노드의 링크는 노드 위로 지나는 곡선으로 그린다. 배포할 때 넣은 주소는 노드 아래에 쓴다
@@ -11,9 +13,11 @@ const ARC_SPACE = 40;
 const LINE = 15;
 const KIND_LABELS: Record<string, string> = { host: "Linux", router: "FRRouting" };
 
-type Props = Pick<LabRun, "nodes" | "links" | "addresses">;
+type Props = Pick<LabRun, "nodes" | "links" | "addresses"> & {
+  onNodeClick?: (node: string) => void; // 있으면 노드를 눌러 그 노드의 터미널을 연다
+};
 
-export function LabTopology({ nodes, links, addresses }: Props) {
+export function LabTopology({ nodes, links, addresses, onNodeClick }: Props) {
   const index = new Map(nodes.map((n, i) => [n.name, i]));
   const ends = links.map(({ a, b }) => [a, b].map(split).sort((x, y) => index.get(x.node)! - index.get(y.node)!));
   const arcs = ends.some(([l, r]) => index.get(r.node)! - index.get(l.node)! > 1);
@@ -40,7 +44,7 @@ export function LabTopology({ nodes, links, addresses }: Props) {
       viewBox={`0 0 ${width} ${height}`}
       width="100%"
       style={{ maxWidth: width, minWidth: width * 0.8 }} // 더 좁으면 줄이지 않고 가로로 스크롤한다
-      role="img"
+      role={onNodeClick ? "group" : "img"}
       aria-label={`토폴로지: ${label}`}
       className="font-mono text-[11px]"
     >
@@ -69,10 +73,27 @@ export function LabTopology({ nodes, links, addresses }: Props) {
 
       {nodes.map((n) => {
         const x = cx(n.name);
+        const clickable = onNodeClick && {
+          role: "button",
+          tabIndex: 0,
+          "aria-label": `${n.name} 터미널 열기`,
+          className: "group/node cursor-pointer outline-none",
+          onClick: () => onNodeClick(n.name),
+          onKeyDown: (e: KeyboardEvent) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onNodeClick(n.name);
+            }
+          },
+        };
         return (
-          <g key={n.name}>
+          <g key={n.name} {...clickable}>
+            {onNodeClick && <title>{n.name} 터미널 열기</title>}
             <rect x={x - NODE_W / 2} y={top} width={NODE_W} height={NODE_H} rx={8}
-              className={n.kind === "router" ? "fill-accent stroke-primary" : "fill-card stroke-border"} strokeWidth={1.5} />
+              className={cn(
+                n.kind === "router" ? "fill-accent stroke-primary" : "fill-card stroke-border",
+                onNodeClick && "group-hover/node:stroke-ring group-focus-visible/node:stroke-ring group-focus-visible/node:[stroke-width:3]",
+              )} strokeWidth={1.5} />
             <text x={x} y={top + 19} textAnchor="middle" className="fill-foreground font-sans text-[13px] font-semibold">
               {n.name}
             </text>

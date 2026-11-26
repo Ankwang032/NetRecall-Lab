@@ -5,6 +5,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api, ApiError, errorMessage, type LabResult, type LabRun } from "@/api";
+import { LabTerminals, SHELLS, sessionKey, type TerminalSession } from "@/components/LabTerminals";
 import { LabTopology } from "@/components/LabTopology";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +42,24 @@ export function LabRunView({ run, onChange, onRestart, onClose }: Props) {
   const live = isLive(run);
   const [busy, setBusy] = useState<"verify" | "finish" | "restart" | null>(null);
   const [confirm, setConfirm] = useState<"finish" | "restart" | null>(null);
+  const [terminals, setTerminals] = useState<TerminalSession[]>([]);
+  const [activeTerminal, setActiveTerminal] = useState<string | null>(null);
+  const terminalPanel = useRef<HTMLDivElement>(null);
+
+  // 이미 연 터미널이면 그 탭으로 간다
+  function openTerminal(node: string, shell?: string) {
+    const kind = run.nodes.find((n) => n.name === node)?.kind ?? "host";
+    const session = { node, shell: shell ?? SHELLS[kind][0] };
+    const key = sessionKey(session);
+    if (!terminals.some((s) => sessionKey(s) === key)) setTerminals([...terminals, session]);
+    setActiveTerminal(key);
+  }
+
+  function closeTerminal(key: string) {
+    const rest = terminals.filter((s) => sessionKey(s) !== key);
+    setTerminals(rest);
+    if (activeTerminal === key) setActiveTerminal(rest.length > 0 ? sessionKey(rest[rest.length - 1]) : null);
+  }
 
   async function refresh() {
     onChange(await api.labRun(run.run_id));
@@ -135,10 +154,21 @@ export function LabRunView({ run, onChange, onRestart, onClose }: Props) {
             ))}
           </dl>
           <div className="overflow-x-auto rounded-lg border bg-background p-3">
-            <LabTopology nodes={run.nodes} links={run.links} addresses={run.addresses} />
+            <LabTopology nodes={run.nodes} links={run.links} addresses={run.addresses}
+              onNodeClick={live ? (node) => {
+                openTerminal(node);
+                terminalPanel.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              } : undefined} />
           </div>
         </CardContent>
       </Card>
+
+      {live && (
+        <div ref={terminalPanel}>
+          <LabTerminals run={run} sessions={terminals} active={activeTerminal}
+            onOpen={openTerminal} onSelect={setActiveTerminal} onClose={closeTerminal} />
+        </div>
+      )}
 
       {live && <Connect nodes={run.nodes} />}
 
@@ -251,7 +281,7 @@ function Connect({ nodes }: { nodes: LabRun["nodes"] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><TerminalWindowIcon aria-hidden />노드 접속</CardTitle>
+        <CardTitle className="flex items-center gap-2"><TerminalWindowIcon aria-hidden />자기 터미널에서 접속</CardTitle>
         <p className="text-sm text-muted-foreground">
           자기 터미널에서 실행하세요. Linux 노드는 셸(sh), 라우터는 FRRouting 설정 셸(vtysh)이 열립니다.
         </p>

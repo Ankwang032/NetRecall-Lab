@@ -238,4 +238,6 @@ export const api = {
   verifyLab: (runId: number) => request<LabAttempt>("POST", `/lab-runs/${runId}/attempts`),
   labHint: (runId: number, checkId: string) => request<LabHint>("POST", `/lab-runs/${runId}/hints`, { check_id: checkId }),
   finishLab: (runId: number) => request<LabRun>("POST", `/lab-runs/${runId}/finish`),
+  terminalTicket: (runId: number, node: string, shell: string) =>
+    request<{ ticket: string; node: string; shell: string }>("POST", `/lab-runs/${runId}/terminal-tickets`, { node, shell }),
 };

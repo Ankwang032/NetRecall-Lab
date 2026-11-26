@@ -26,6 +26,7 @@ DESTROY_TIMEOUT = 120
 EXEC_TIMEOUT = 15      # 검사 명령은 3초 안팎. 끝나지 않는 명령이 검증을 붙잡지 않게 한다
 ROUTER_READY_TIMEOUT = 30
 DEFAULT_WORK_DIR = "~/.netrecall/labs"
+TERMINAL_SHELLS = ("sh", "vtysh")  # 웹 터미널이 열 수 있는 셸 (노드 종류별 허용은 API가 정한다)
 DOCKER_ERRORS = ("Error response from daemon:", "OCI runtime exec failed")  # 명령이 아니라 docker가 실패함
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -82,6 +83,15 @@ class ContainerlabRuntime:
         p = self._run([self.docker, "ps", "-a", "--filter", "label=containerlab", "--format", '{{.Label "containerlab"}}'],
                       DESTROY_TIMEOUT, "실습 목록 조회")
         return sorted({name for name in p.stdout.split() if RUN_NAME_PATTERN.match(name)})
+
+    def terminal_argv(self, run_name: str, node: str, shell: str) -> list[str]:
+        """학습자가 자기 터미널에서 치는 접속 명령과 같다. 호출하는 쪽이 PTY에서 실행한다."""
+        _check_run_name(run_name)
+        if not NODE_NAME_PATTERN.match(node):
+            raise LabRuntimeError(f"노드 이름이 틀렸습니다: {node}")
+        if shell not in TERMINAL_SHELLS:
+            raise LabRuntimeError(f"열 수 없는 셸입니다: {shell}")
+        return [self.docker, "exec", "-it", f"clab-{run_name}-{node}", shell]
 
     def describe(self) -> RuntimeInfo:
         out = self._run([self.containerlab, "version"], DESTROY_TIMEOUT, "버전 조회").stdout
