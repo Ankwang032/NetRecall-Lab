@@ -8,6 +8,48 @@ export type SyncResponse = {
   dangling_refs: { concept_id: string; ref: string }[];
 };
 
+// ---- 개념 보기 (읽기 전용, 설계서 §E-2) ----
+
+export type ConceptSummary = {
+  id: string;
+  title: string;
+  category: string | null;
+  difficulty: number | null;
+  keywords: string[];
+  source_type: string; // markdown | notion
+  source_ref: string; // Markdown은 파일 경로, Notion은 페이지 id
+  archived: boolean;
+  prerequisites: string[];
+  related: string[];
+  labs: string[];
+  card_count: number;
+  next_due_at: string | null;
+};
+
+export type ConceptDetail = ConceptSummary & { content: string; questions: string[] };
+
+export type ConceptSource = {
+  source_type: string; // markdown | notion
+  path: string | null; // Markdown 파일 경로 (개념 폴더 기준)
+  url: string | null; // Notion 페이지 주소
+  text: string; // Markdown은 파일 그대로, Notion은 가져와 저장한 본문
+};
+
+export type ConceptHistory = {
+  concept_id: string;
+  cards: {
+    card_id: number;
+    question: string;
+    due_at: string;
+    reviews: number;
+    last_rating: number | null; // 1=Again, 2=Hard, 3=Good, 4=Easy
+    last_reviewed_at: string | null;
+    last_score: number | null; // 원래 질문의 최근 AI 평가 점수
+    last_scored_at: string | null;
+  }[];
+  labs: { scenario_id: string; title: string | null; runs: LabRunSummary[] }[]; // title이 없으면 시나리오 파일이 없다
+};
+
 export type DueCard = {
   card_id: number;
   concept_id: string;
@@ -109,6 +151,7 @@ export type LabRunSummary = {
   status: string;
   level: LabLevel;
   attempts: number;
+  attempts_to_pass: number | null; // 처음 통과한 검증이 몇 번째였나
   hints_used: number;
   started_at: string;
   passed_at: string | null;
@@ -230,6 +273,11 @@ export const api = {
     request<NotionPages>("GET", `/notion/pages?parent=${encodeURIComponent(parent)}`),
   notionFiles: (pageIds: string[]) =>
     request<{ files: NotionFile[] }>("POST", "/notion/files", { page_ids: pageIds }),
+  concepts: (includeArchived: boolean) =>
+    request<ConceptSummary[]>("GET", `/concepts${includeArchived ? "?include_archived=true" : ""}`),
+  concept: (id: string) => request<ConceptDetail>("GET", `/concepts/${encodeURIComponent(id)}`),
+  conceptSource: (id: string) => request<ConceptSource>("GET", `/concepts/${encodeURIComponent(id)}/source`),
+  conceptHistory: (id: string) => request<ConceptHistory>("GET", `/concepts/${encodeURIComponent(id)}/history`),
   labs: () => request<LabList>("GET", "/labs"),
   currentRun: () => request<LabRun | null>("GET", "/lab-runs/current"),
   labRun: (runId: number) => request<LabRun>("GET", `/lab-runs/${runId}`),

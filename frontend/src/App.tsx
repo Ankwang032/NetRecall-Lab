@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { ArrowsClockwiseIcon, CardsIcon, FilePlusIcon, FlaskIcon, GraphIcon, SpinnerIcon, type Icon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, BooksIcon, CardsIcon, FilePlusIcon, FlaskIcon, GraphIcon, SpinnerIcon, type Icon } from "@phosphor-icons/react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import { toast } from "sonner";
 import { api, ApiError, errorMessage, type DueCard, type SyncResponse } from "@/api";
+import { ConceptPage } from "@/components/ConceptPage";
+import { ConceptsPage } from "@/components/ConceptsPage";
 import { LabsPage } from "@/components/LabsPage";
 import { ReviewList } from "@/components/ReviewList";
 import { StudySession } from "@/components/StudySession";
@@ -51,6 +53,7 @@ export function App() {
 
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/", label: "오늘의 복습", icon: CardsIcon },
+  { to: "/concepts", label: "개념", icon: BooksIcon },
   { to: "/labs", label: "실습", icon: FlaskIcon },
 ];
 
@@ -127,7 +130,7 @@ function Shell() {
         </div>
         <nav aria-label="화면" className="flex flex-col gap-1.5">
           {NAV.map(({ to, label, icon: IconComponent }) => (
-            <NavLink key={to} to={to} end title={label}
+            <NavLink key={to} to={to} end={to === "/"} title={label}
               className={({ isActive }) => cn(
                 "flex h-11 items-center gap-3 rounded-lg px-3 text-base font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -166,6 +169,8 @@ function Shell() {
               />
             )}
           />
+          <Route path="/concepts" element={<ConceptsPage />} />
+          <Route path="/concepts/:id" element={<ConceptPage />} />
           <Route path="/labs" element={<LabsPage />} />
           <Route path="*" element={<p className="text-muted-foreground">없는 화면입니다.</p>} />
         </Routes>

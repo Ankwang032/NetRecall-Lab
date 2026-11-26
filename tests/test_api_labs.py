@@ -40,8 +40,10 @@ def test_list_labs_shows_last_run(client, runtime):
     solve_lab_001(runtime)
     client.post("/lab-runs/2/attempts")
     last = client.get("/labs").json()["scenarios"][0]["last_run"]
-    assert {k: last[k] for k in ("run_id", "status", "level", "attempts", "hints_used", "finished_at")} == \
-        {"run_id": 2, "status": "passed", "level": "easy", "attempts": 1, "hints_used": 1, "finished_at": None}
+    assert {k: last[k] for k in ("run_id", "status", "level", "attempts", "attempts_to_pass", "hints_used",
+                                 "finished_at")} == \
+        {"run_id": 2, "status": "passed", "level": "easy", "attempts": 1, "attempts_to_pass": 1, "hints_used": 1,
+         "finished_at": None}
     assert last["passed_at"].endswith("+09:00")
 
 

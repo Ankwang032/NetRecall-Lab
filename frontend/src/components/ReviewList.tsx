@@ -5,8 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FilterButton } from "@/components/FilterButton";
 import { todayKst } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 type Props = {
   cards: DueCard[] | null;
@@ -46,9 +46,9 @@ export function ReviewList({ cards, topic, onTopic, error, syncIssues, onStart, 
 
       {topics.length > 1 && (
         <div role="group" aria-label="주제" className="flex flex-wrap gap-1.5">
-          <TopicButton label="전체" count={cards?.length ?? 0} pressed={active === null} onClick={() => onTopic(null)} />
+          <FilterButton label="전체" count={cards?.length ?? 0} pressed={active === null} onClick={() => onTopic(null)} />
           {topics.map((t) => (
-            <TopicButton key={t.key} label={t.label} count={t.count} pressed={active === t.key} onClick={() => onTopic(t.key)} />
+            <FilterButton key={t.key} label={t.label} count={t.count} pressed={active === t.key} onClick={() => onTopic(t.key)} />
           ))}
         </div>
       )}
@@ -119,17 +119,6 @@ function countTopics(cards: DueCard[]) {
   return [...counts]
     .map(([key, count]) => ({ key, label: key || "분류 없음", count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ko"));
-}
-
-type TopicButtonProps = { label: string; count: number; pressed: boolean; onClick: () => void };
-
-function TopicButton({ label, count, pressed, onClick }: TopicButtonProps) {
-  return (
-    <Button variant={pressed ? "default" : "outline"} size="sm" aria-pressed={pressed} onClick={onClick}>
-      {label}
-      <span className={cn("tabular-nums", pressed ? "opacity-80" : "text-muted-foreground")}>{count}</span>
-    </Button>
-  );
 }
 
 function groupByConcept(cards: DueCard[]) {

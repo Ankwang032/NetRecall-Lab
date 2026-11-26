@@ -440,7 +440,7 @@ function Inline({ text }: { text: string }) {
   );
 }
 
-function elapsed(from: string, to: string) {
+export function elapsed(from: string, to: string) {
   const minutes = Math.max(1, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 60000));
   return minutes >= 60 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분` : `${minutes}분`;
 }

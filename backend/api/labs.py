@@ -33,6 +33,7 @@ class RunSummary(BaseModel):
     status: str
     level: str
     attempts: int
+    attempts_to_pass: int | None  # 처음 통과한 검증이 몇 번째였나
     hints_used: int
     started_at: datetime
     passed_at: datetime | None
@@ -150,7 +151,7 @@ def list_labs(request: Request, session: SessionDep, runtime: RuntimeDep) -> Sce
     return ScenarioListResponse(
         scenarios=[ScenarioInfo(id=s.id, title=s.title, type=s.type, concepts=list(s.concepts),
                                 time_limit_minutes=s.time_limit_minutes,
-                                last_run=_summary(session, last[s.id]) if s.id in last else None)
+                                last_run=run_summary(session, last[s.id]) if s.id in last else None)
                    for s in scenarios],
         errors=[ScenarioErrorInfo(scenario=name, message=message) for name, message in errors],
     )
@@ -265,10 +266,12 @@ def attempt_response(session: Session, attempt: LabAttempt, run: LabRun) -> Atte
                            results=[] if _hidden(run) else results)
 
 
-def _summary(session: Session, run: LabRun) -> RunSummary:
+def run_summary(session: Session, run: LabRun) -> RunSummary:
     attempts = _verified(session, run)
     passed_at = next((a.attempted_at for a in attempts if a.passed), None)
+    to_pass = next((i for i, a in enumerate(attempts, 1) if a.passed), None)
     return RunSummary(run_id=run.id, status=run.status, level=run.level, attempts=len(attempts),
+                      attempts_to_pass=to_pass,
                       hints_used=labs.hints_used(session, run.id), started_at=to_kst(run.started_at),
                       passed_at=to_kst(passed_at) if passed_at else None,
                       finished_at=to_kst(run.finished_at) if run.finished_at else None)

@@ -730,3 +730,109 @@ test("터미널은 노드 버튼이나 토폴로지 노드를 눌러 열고, 탭
   expect(screen.queryByText(/^터미널 r1/)).toBeNull();
   expect(screen.getByText("터미널 pc1 sh (보는 중)")).toBeTruthy();
 });
+
+// ---- 개념 보기 ----
+
+const CONCEPT_BASE = {
+  difficulty: null, source_type: "notion", source_ref: "41fd0d99", archived: false,
+  prerequisites: [], related: [], labs: [],
+};
+const CONCEPTS = [
+  { ...CONCEPT_BASE, id: "NET-105", title: "IP 주소와 서브넷", category: "네트워크 기본", keywords: ["CIDR"],
+    card_count: 7, next_due_at: "2026-11-01T09:00:00+09:00" },
+  { ...CONCEPT_BASE, id: "NET-111", title: "정적 라우팅", category: "라우팅", keywords: ["next-hop"], difficulty: 3,
+    prerequisites: ["NET-105"], card_count: 7, next_due_at: "2099-01-01T09:00:00+09:00" },
+];
+const NET_111 = {
+  ...CONCEPTS[1],
+  content: "## 2. 정적 경로의 구성\n\n| 형태 | 예시 |\n| --- | --- |\n| 다음 홉 | `ip route 192.168.3.0/24 10.0.12.2` |\n\n<b>굵게</b>\n",
+  questions: [],
+};
+const NET_111_HISTORY = {
+  concept_id: "NET-111",
+  cards: [{
+    card_id: 21, question: "정적 경로의 기본 관리 거리는?", due_at: "2099-01-01T09:00:00+09:00", reviews: 2, last_rating: 3,
+    last_reviewed_at: "2026-11-26T10:00:00+09:00", last_score: 80, last_scored_at: "2026-11-26T10:00:00+09:00",
+  }],
+  labs: [
+    { scenario_id: "LAB-002", title: "라우터 두 대 너머로 통신하기", runs: [{
+      run_id: 5, status: "passed", level: "normal", attempts: 2, attempts_to_pass: 2, hints_used: 1,
+      started_at: "2026-11-26T13:00:00+09:00", passed_at: "2026-11-26T13:12:00+09:00", finished_at: "2026-11-26T13:13:00+09:00",
+    }] },
+    { scenario_id: "LAB-009", title: null, runs: [] },
+  ],
+};
+
+test("개념 목록은 제목·키워드·id로 찾고 카테고리로 거르며, 보관된 개념은 골라서 본다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts": () => [200, CONCEPTS],
+    "GET /concepts?include_archived=true": () => [200, [...CONCEPTS, { ...CONCEPTS[0], id: "NET-099", title: "옛 개념", archived: true }]],
+  });
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole("link", { name: "개념" }));
+  const list = await screen.findByRole("list", { name: "개념 목록" });
+  expect(within(list).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/concepts/NET-105", "/concepts/NET-111"]);
+  expect(within(list).getByText("지금 복습할 때")).toBeTruthy();
+
+  await user.type(screen.getByRole("searchbox", { name: "개념 찾기" }), "next-hop"); // 키워드
+  expect(within(screen.getByRole("list", { name: "개념 목록" })).getAllByRole("link")).toHaveLength(1);
+  await user.clear(screen.getByRole("searchbox", { name: "개념 찾기" }));
+  await user.click(within(screen.getByRole("group", { name: "카테고리" })).getByRole("button", { name: /네트워크 기본/ }));
+  expect(within(screen.getByRole("list", { name: "개념 목록" })).getByText("IP 주소와 서브넷")).toBeTruthy();
+  expect(window.location.search).toContain("category="); // 뒤로 가기로 돌아와도 남는다
+
+  await user.click(screen.getByRole("checkbox", { name: "보관된 개념도 보기" }));
+  expect(await screen.findByText("보관됨")).toBeTruthy();
+  expect(count(calls, "GET /concepts?include_archived=true")).toBe(1);
+});
+
+test("개념 상세는 카드 기록·연결된 실습·본문을 보여 주고, 선수 개념으로 이동한다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/NET-111": () => [200, NET_111],
+    "GET /concepts/NET-111/history": () => [200, NET_111_HISTORY],
+    "GET /concepts/NET-111/source": () => [200, {
+      source_type: "notion", path: null, url: "https://www.notion.so/fe8d", text: "## 2. 정적 경로의 구성\n| 형태 | 예시 |\n<b>굵게</b>\n",
+    }],
+    "GET /concepts/NET-105": () => [200, { ...CONCEPTS[0], content: "서브넷 본문", questions: [] }],
+    "GET /concepts/NET-105/history": () => [200, { concept_id: "NET-105", cards: [], labs: [] }],
+  });
+  const user = userEvent.setup();
+  window.history.pushState(null, "", "/concepts/NET-111");
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { level: 1, name: "정적 라우팅" })).toBeTruthy();
+  const row = screen.getByText("정적 경로의 기본 관리 거리는?").closest("tr")!;
+  expect([...row.querySelectorAll("td")].slice(1, 4).map((td) => td.textContent)).toEqual(["2번", "Good", "80점"]);
+  expect(screen.getByText(/보통 · 2번째 검증에 통과 · 힌트 1번 · 12분 걸림/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: "실습 열기" }).getAttribute("href")).toBe("/labs?start=LAB-002");
+  expect(screen.getByText("시나리오 파일이 없습니다")).toBeTruthy(); // 원본이 가리키지만 시나리오가 없는 실습
+  expect((await screen.findByText("ip route 192.168.3.0/24 10.0.12.2")).tagName).toBe("CODE"); // 본문은 따로 불러온다
+  expect(screen.getAllByRole("table")).toHaveLength(2); // 카드 표 + 본문의 Markdown 표
+  expect(document.querySelector("b")).toBeNull(); // 본문의 HTML은 그리지 않는다
+
+  await user.click(screen.getByRole("button", { name: "원본" })); // 원본은 렌더링하지 않고 그대로
+  const source = await screen.findByLabelText("원본");
+  expect(source.textContent).toBe("## 2. 정적 경로의 구성\n| 형태 | 예시 |\n<b>굵게</b>\n");
+  expect(screen.getByRole("link", { name: /Notion에서 열기/ }).getAttribute("href")).toBe("https://www.notion.so/fe8d");
+  await user.click(screen.getByRole("button", { name: "본문" }));
+  expect(await screen.findByText("ip route 192.168.3.0/24 10.0.12.2")).toBeTruthy();
+
+  await user.click(screen.getByRole("link", { name: "NET-105" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "IP 주소와 서브넷" })).toBeTruthy();
+  expect(screen.getByText("연결된 실습이 없습니다", { exact: false })).toBeTruthy();
+});
+
+test("없는 개념은 알린다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /concepts/NET-404": () => [404, { detail: "개념이 없습니다" }],
+    "GET /concepts/NET-404/history": () => [404, { detail: "개념이 없습니다" }],
+  });
+  window.history.pushState(null, "", "/concepts/NET-404");
+  render(<App />);
+  expect(await screen.findByText("개념 NET-404이(가) 없습니다.")).toBeTruthy();
+});

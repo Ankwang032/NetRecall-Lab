@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -11,12 +12,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.api.deps import get_llm, get_notion, get_session
+from backend.api.labs import RunSummary, run_summary
+from backend.core.time import to_kst
 from backend.models import Concept, ConceptLab, ConceptRelation
+from backend.services import concept_history as history
 from backend.services.concept_extract import KnownConcept
 from backend.services.concept_normalize import convert_file, plan_files
 from backend.services.concept_store import sync_source
 from backend.services.concept_sync import SyncPlan
 from backend.services.concept_upload import NewFile, check_files, list_folders, save_files
+from backend.services.lab_service import load_scenarios
 from integrations.llm import LLMClient, LLMError
 from integrations.sources.markdown import MarkdownConceptSource
 from integrations.sources.notion import NotionClient, NotionConceptSource, NotionError
@@ -39,6 +44,8 @@ class ConceptSummary(BaseModel):
     prerequisites: list[str]
     related: list[str]
     labs: list[str]
+    card_count: int                # 활성 카드 수
+    next_due_at: datetime | None   # 가장 가까운 다음 복습일 (카드가 없으면 None)
 
 
 class ConceptDetail(ConceptSummary):
@@ -228,7 +235,8 @@ def list_concepts(session: SessionDep, include_archived: bool = False) -> list[C
         query = query.where(Concept.archived.is_(False))
     concepts = session.scalars(query).all()
     links = _load_links(session, [c.id for c in concepts])
-    return [ConceptSummary(**_summary_fields(c, links)) for c in concepts]
+    counts = history.card_counts(session, [c.id for c in concepts])
+    return [ConceptSummary(**_summary_fields(c, links, counts)) for c in concepts]
 
 
 @router.get("/concepts/{concept_id}")
@@ -238,9 +246,82 @@ def get_concept(concept_id: str, session: SessionDep) -> ConceptDetail:
         raise HTTPException(status_code=404, detail="개념이 없습니다")
     links = _load_links(session, [concept.id])
     return ConceptDetail(
-        **_summary_fields(concept, links),
+        **_summary_fields(concept, links, history.card_counts(session, [concept.id])),
         content=concept.content,
         questions=concept.seed_questions,
+    )
+
+
+class ConceptSource(BaseModel):
+    source_type: str     # markdown | notion
+    path: str | None     # Markdown 파일 경로 (개념 폴더 기준)
+    url: str | None      # Notion 페이지 주소
+    text: str            # Markdown은 파일 그대로(frontmatter·질문 포함), Notion은 가져와 저장한 본문
+
+
+@router.get("/concepts/{concept_id}/source")
+def get_concept_source(concept_id: str, request: Request, session: SessionDep) -> ConceptSource:
+    """개념의 원본. 읽기만 한다. Markdown 파일은 개념 폴더 안의 것만 연다."""
+    concept = session.get(Concept, concept_id)
+    if concept is None:
+        raise HTTPException(status_code=404, detail="개념이 없습니다")
+    if concept.source_type == "notion":
+        return ConceptSource(source_type="notion", path=None, url=f"https://www.notion.so/{concept.source_ref.replace('-', '')}",
+                             text=concept.content)
+    root = _concepts_root(request)
+    path = (root / concept.source_ref).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise HTTPException(status_code=404,
+                            detail=f"개념 폴더에 파일이 없습니다: {concept.source_ref}. 옮기거나 지웠다면 동기화하세요")
+    return ConceptSource(source_type="markdown", path=concept.source_ref, url=None,
+                         text=path.read_text(encoding="utf-8", errors="replace"))
+
+
+class CardHistory(BaseModel):
+    card_id: int
+    question: str
+    due_at: datetime
+    reviews: int                     # 복습 횟수
+    last_rating: int | None          # 1=Again, 2=Hard, 3=Good, 4=Easy
+    last_reviewed_at: datetime | None
+    last_score: int | None           # 원래 질문의 가장 최근 AI 평가 점수
+    last_scored_at: datetime | None
+
+
+class LabHistory(BaseModel):
+    scenario_id: str
+    title: str | None                # 시나리오 파일이 없으면 None
+    runs: list[RunSummary]           # 최근 것부터
+
+
+class ConceptHistory(BaseModel):
+    concept_id: str
+    cards: list[CardHistory]
+    labs: list[LabHistory]
+
+
+@router.get("/concepts/{concept_id}/history")
+def get_concept_history(concept_id: str, request: Request, session: SessionDep) -> ConceptHistory:
+    """카드별 복습 상태와 기록, 원래 질문 평가 요약, 연결된 실습의 실행 (설계서 §E-2). 읽기만 한다."""
+    concept = session.get(Concept, concept_id)
+    if concept is None:
+        raise HTTPException(status_code=404, detail="개념이 없습니다")
+    scenarios = load_scenarios(request.app.state.scenarios_dir)[0]
+    titles = {sc.id: sc.title for sc in scenarios}
+    ids = history.lab_ids(concept.id, _load_links(session, [concept.id])[concept.id]["lab"], scenarios)
+    runs = history.runs_by_scenario(session, ids)
+    return ConceptHistory(
+        concept_id=concept.id,
+        cards=[
+            CardHistory(card_id=st.card.id, question=st.card.question, due_at=to_kst(st.card.due_at),
+                        reviews=st.reviews, last_rating=st.last_rating,
+                        last_reviewed_at=to_kst(st.last_reviewed_at) if st.last_reviewed_at else None,
+                        last_score=st.last_score,
+                        last_scored_at=to_kst(st.last_scored_at) if st.last_scored_at else None)
+            for st in history.card_stats(session, concept.id)
+        ],
+        labs=[LabHistory(scenario_id=i, title=titles.get(i), runs=[run_summary(session, r) for r in runs[i]])
+              for i in ids],
     )
 
 
@@ -262,13 +343,16 @@ def _sync_response(plan: SyncPlan, dry_run: bool) -> SyncResponse:
     )
 
 
-def _summary_fields(c: Concept, links: dict[str, dict[str, list[str]]]) -> dict:
+def _summary_fields(c: Concept, links: dict[str, dict[str, list[str]]],
+                    counts: dict[str, tuple[int, datetime]]) -> dict:
     own = links[c.id]
+    count, due = counts.get(c.id, (0, None))
     return {
         "id": c.id, "title": c.title, "category": c.category, "difficulty": c.difficulty,
         "keywords": c.keywords, "source_type": c.source_type, "source_ref": c.source_ref,
         "archived": c.archived, "prerequisites": own["prerequisite"],
         "related": own["related"], "labs": own["lab"],
+        "card_count": count, "next_due_at": to_kst(due) if due else None,
     }
 
 

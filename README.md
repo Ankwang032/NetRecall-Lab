@@ -21,6 +21,7 @@ uvicorn backend.main:create_app --factory --reload --env-file .env
 - 화면: http://127.0.0.1:8000/ (Codespaces는 포트 탭의 8000번 주소). UI를 빌드하지 않았으면 `/`는 404입니다
   - 학습: 원래 질문에 답 → AI 평가 → (필요하면) AI 변형 질문에 한 번 더 답 → 등급 선택 → 다음 카드
   - 개념 추가: .md 파일을 끌어다 놓으면 형식을 검사하고, 모두 통과하면 개념 폴더에 저장한 뒤 동기화합니다
+  - 개념(`/concepts`): 읽기 전용 목록(제목·키워드·id 검색, 카테고리)과 상세(카드별 복습 기록, 원래 질문의 최근 평가, 연결된 실습과 실행 이력, 본문과 원본 보기). 개념은 원본(.md·Notion)에서 고친다
   - 실습(`/labs`): 아래 "실습" 절의 준비가 필요합니다. 도움 수준을 골라 시작 → 화면 안 터미널이나 자기 터미널에서 노드에 접속해 설정 → 검증·힌트 → 끝내기
   - 화면 경로(`/labs` 등)는 API 경로와 겹칩니다. 브라우저 주소창으로 열면(Accept: text/html) 화면을, 화면의 요청에는 API 응답을 줍니다
 - UI를 고칠 때는 `cd frontend && npm run dev`로 Vite 서버(5173번)를 띄우면 저장하자마자 반영됩니다. API 요청은 8000번 FastAPI로 넘어갑니다
@@ -29,7 +30,9 @@ uvicorn backend.main:create_app --factory --reload --env-file .env
 API:
 
 - `POST /sync/markdown` (`?dry_run=true`로 미리보기): 개념 폴더를 DB에 동기화
-- `GET /concepts` (`?include_archived=true`), `GET /concepts/{id}`
+- `GET /concepts` (`?include_archived=true`), `GET /concepts/{id}`: 카드 수(`card_count`)와 가장 가까운 다음 복습일(`next_due_at`)도 준다
+- `GET /concepts/{id}/source`: 원본. Markdown은 개념 폴더의 파일 그대로(폴더 밖 경로는 404), Notion은 페이지 주소와 가져와 저장한 본문
+- `GET /concepts/{id}/history`: 카드별 복습 횟수·마지막 등급·다음 복습일·원래 질문의 최근 평가 점수, 연결된 실습(개념의 `labs`와 시나리오 `concepts`)과 실행 요약
 - `GET /concepts/folders`: 개념 파일을 올릴 수 있는 폴더 (`""` = 개념 폴더 최상위)
 - `POST /concepts/files` (`?dry_run=true`로 검사만) `{"folder": "network", "files": [{"name": "ospf.md", "content": "..."}]}`: 개념 파일을 검사하고, 모두 통과하면 저장 후 동기화. 하나라도 실패하면 아무것도 저장하지 않습니다 (`saved: false`)
 - `GET /reviews/due`: 지금 복습할 카드 (개념의 질문 1개 = 카드 1장)
