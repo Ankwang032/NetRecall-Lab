@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
-import { ArrowsClockwiseIcon, FilePlusIcon, GraphIcon, SpinnerIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, CardsIcon, FilePlusIcon, FlaskIcon, GraphIcon, SpinnerIcon, type Icon } from "@phosphor-icons/react";
+import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import { toast } from "sonner";
 import { api, ApiError, errorMessage, type DueCard, type SyncResponse } from "@/api";
+import { LabsPage } from "@/components/LabsPage";
 import { ReviewList } from "@/components/ReviewList";
 import { StudySession } from "@/components/StudySession";
 import { UploadDialog } from "@/components/UploadDialog";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 
 const SYNC_LABELS: Record<string, string> = {
   created: "새로 추가",
@@ -37,7 +40,21 @@ function mergeIssues(markdown: SyncResponse, notion: SyncResponse | null): SyncR
   };
 }
 
+// 화면 경로는 설계서 §E-1. 학습 세션은 경로 없이 이 화면 안에서 연다
 export function App() {
+  return (
+    <BrowserRouter>
+      <Shell />
+    </BrowserRouter>
+  );
+}
+
+const NAV: { to: string; label: string; icon: Icon }[] = [
+  { to: "/", label: "오늘의 복습", icon: CardsIcon },
+  { to: "/labs", label: "실습", icon: FlaskIcon },
+];
+
+function Shell() {
   const [cards, setCards] = useState<DueCard[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [session, setSession] = useState<DueCard[] | null>(null);
@@ -99,39 +116,57 @@ export function App() {
   }
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-2 px-4">
-          <div className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <GraphIcon weight="bold" className="size-4" aria-hidden />
-            </span>
-            NetRecall Lab
-          </div>
-          <div className="ml-auto flex items-center gap-1.5">
-            <Button variant="outline" onClick={() => setUploadOpen(true)}>
-              <FilePlusIcon aria-hidden /> 개념 추가
-            </Button>
-            <Button variant="ghost" onClick={runSync} disabled={syncing}>
-              {syncing ? <SpinnerIcon className="animate-spin" aria-hidden /> : <ArrowsClockwiseIcon aria-hidden />}
-              동기화
-            </Button>
-          </div>
+    <div className="flex min-h-dvh">
+      {/* 좁은 화면에서는 아이콘만 보인다 */}
+      <aside className="sticky top-0 flex h-dvh w-14 shrink-0 flex-col gap-1 border-r bg-card p-2 md:w-56">
+        <div className="mb-3 flex h-10 items-center gap-2 px-1.5 font-semibold tracking-tight">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+            <GraphIcon weight="bold" className="size-4" aria-hidden />
+          </span>
+          <span className="hidden md:inline">NetRecall Lab</span>
         </div>
-      </header>
+        <nav aria-label="화면" className="flex flex-col gap-1">
+          {NAV.map(({ to, label, icon: IconComponent }) => (
+            <NavLink key={to} to={to} end title={label}
+              className={({ isActive }) => cn(
+                "flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}>
+              <IconComponent className="size-4.5 shrink-0" aria-hidden />
+              <span className="hidden md:inline">{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <div className="mt-auto flex flex-col gap-1">
+          <Button variant="ghost" className="justify-start" onClick={() => setUploadOpen(true)} title="개념 추가">
+            <FilePlusIcon aria-hidden /> <span className="hidden md:inline">개념 추가</span>
+          </Button>
+          <Button variant="ghost" className="justify-start" onClick={runSync} disabled={syncing} title="동기화">
+            {syncing ? <SpinnerIcon className="animate-spin" aria-hidden /> : <ArrowsClockwiseIcon aria-hidden />}
+            <span className="hidden md:inline">동기화</span>
+          </Button>
+        </div>
+      </aside>
 
-      <main className="mx-auto max-w-3xl px-4 py-8">
-        {session ? (
-          <StudySession cards={session} onExit={exitSession} />
-        ) : (
-          <ReviewList
-            cards={cards}
-            error={loadError}
-            syncIssues={syncIssues}
-            onStart={start}
-            onUpload={() => setUploadOpen(true)}
+      <main className="mx-auto w-full min-w-0 max-w-3xl px-4 py-8">
+        <Routes>
+          <Route
+            path="/"
+            element={session ? (
+              <StudySession cards={session} onExit={exitSession} />
+            ) : (
+              <ReviewList
+                cards={cards}
+                error={loadError}
+                syncIssues={syncIssues}
+                onStart={start}
+                onUpload={() => setUploadOpen(true)}
+              />
+            )}
           />
-        )}
+          <Route path="/labs" element={<LabsPage />} />
+          <Route path="*" element={<p className="text-muted-foreground">없는 화면입니다.</p>} />
+        </Routes>
       </main>
 
       <UploadDialog open={uploadOpen} onOpenChange={setUploadOpen} onSaved={loadCards} />

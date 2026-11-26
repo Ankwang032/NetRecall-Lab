@@ -9,7 +9,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.assessments import router as assessments_router
@@ -29,6 +30,7 @@ from integrations.sources.notion import NotionClient, notion_from_env
 DEFAULT_CONCEPTS_DIR = Path(__file__).resolve().parent.parent / "samples" / "concepts"
 DEFAULT_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 DEFAULT_SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "lab_scenarios"
+API_DOCS = ("/docs", "/docs/oauth2-redirect", "/redoc")  # FastAPI가 HTML로 주는 경로
 log = logging.getLogger(__name__)
 
 
@@ -86,5 +88,16 @@ def create_app(
     # 빌드된 UI(frontend에서 npm run build)가 있으면 /에서 보여 준다. 위 API 경로가 먼저 매칭된다
     ui_dir = Path(frontend_dir or DEFAULT_FRONTEND_DIR)
     if ui_dir.is_dir():
+        # 화면 경로(/labs 등)는 API 경로와 겹친다. 브라우저 주소창으로 연 요청(Accept: text/html)이면
+        # API 대신 화면을 준다. 화면의 fetch는 Accept가 */*라 API로 간다.
+        # Vary·no-cache가 없으면 브라우저가 캐시한 이 HTML을 같은 주소의 fetch에 그대로 돌려준다(확인함)
+        @app.middleware("http")
+        async def ui_routes(request: Request, call_next):
+            path = request.url.path
+            if (request.method == "GET" and "text/html" in request.headers.get("accept", "")
+                    and path not in API_DOCS and not (ui_dir / path.lstrip("/")).is_file()):
+                return FileResponse(ui_dir / "index.html", headers={"Vary": "Accept", "Cache-Control": "no-cache"})
+            return await call_next(request)
+
         app.mount("/", StaticFiles(directory=ui_dir, html=True), name="ui")
     return app

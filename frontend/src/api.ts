@@ -99,6 +99,87 @@ export type NotionFile = {
   error: string | null;
 };
 
+// ---- 실습 (backend/api/labs.py) ----
+
+export type LabLevel = "easy" | "normal" | "hard"; // 도움 수준. 힌트 3단계 / 2단계 / 힌트 없음·검사별 결과 숨김
+
+export type LabRunSummary = {
+  run_id: number;
+  status: string;
+  level: LabLevel;
+  attempts: number;
+  hints_used: number;
+  started_at: string;
+  passed_at: string | null;
+  finished_at: string | null;
+};
+
+export type LabScenario = {
+  id: string;
+  title: string;
+  type: string;
+  concepts: string[];
+  time_limit_minutes: number;
+  last_run: LabRunSummary | null;
+};
+
+export type LabList = { scenarios: LabScenario[]; errors: { scenario: string; message: string }[] };
+
+export type LabResult = {
+  check_id: string;
+  description: string;
+  kind: string; // ping | route | address | unique(주소 유일성 자동 검사)
+  passed: boolean;
+  message: string;
+  output: string;
+};
+
+export type LabAttempt = {
+  attempt_id: number;
+  run_id: number;
+  run_status: string;
+  passed: boolean;
+  attempted_at: string;
+  passed_count: number;
+  total_count: number;
+  results: LabResult[]; // 어려움은 끝낼 때까지 비어 있다
+};
+
+// status: deploying | active | passed | abandoned | expired | deploy_failed. finished_at이 없으면 환경이 있다
+export type LabRun = {
+  run_id: number;
+  scenario_id: string;
+  title: string;
+  status: string;
+  goal: string;
+  networks: Record<string, string>; // 대역 이름 → 이번 실행의 대역
+  addresses: { interface: string; address: string }[]; // 배포할 때 넣은 주소
+  nodes: { name: string; kind: string; connect: string }[];
+  links: { a: string; b: string }[]; // 노드:인터페이스
+  level: LabLevel;
+  hint_limit: number;
+  checks: { id: string; description: string }[]; // 어려움은 끝낼 때까지 비어 있다
+  attempts: number;
+  hints_used: number;
+  hints: Record<string, string[]>; // 검사 id → 지금까지 연 힌트
+  last_attempt: LabAttempt | null;
+  started_at: string;
+  expires_at: string;
+  passed_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+};
+
+export type LabHint = {
+  check_id: string;
+  number: number;
+  description: string;
+  hints: string[]; // 지금까지 연 힌트
+  new: boolean; // 이번에 새 단계를 열었는가
+  limit: number;
+  total: number;
+};
+
 // HTTP 상태를 함께 담는다. 503은 그 기능이 설정되지 않았다는 뜻이다
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -148,4 +229,12 @@ export const api = {
     request<NotionPages>("GET", `/notion/pages?parent=${encodeURIComponent(parent)}`),
   notionFiles: (pageIds: string[]) =>
     request<{ files: NotionFile[] }>("POST", "/notion/files", { page_ids: pageIds }),
+  labs: () => request<LabList>("GET", "/labs"),
+  currentRun: () => request<LabRun | null>("GET", "/lab-runs/current"),
+  labRun: (runId: number) => request<LabRun>("GET", `/lab-runs/${runId}`),
+  startLab: (scenarioId: string, level: LabLevel) =>
+    request<LabRun>("POST", `/labs/${encodeURIComponent(scenarioId)}/runs`, { level }),
+  verifyLab: (runId: number) => request<LabAttempt>("POST", `/lab-runs/${runId}/attempts`),
+  labHint: (runId: number, checkId: string) => request<LabHint>("POST", `/lab-runs/${runId}/hints`, { check_id: checkId }),
+  finishLab: (runId: number) => request<LabRun>("POST", `/lab-runs/${runId}/finish`),
 };

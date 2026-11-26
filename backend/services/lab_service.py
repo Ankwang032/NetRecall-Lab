@@ -223,6 +223,24 @@ def hints_used(session: Session, run_id: int) -> int:
     return session.scalar(select(func.count()).select_from(LabHint).where(LabHint.run_id == run_id))
 
 
+def opened_hints(session: Session, run: LabRun) -> dict[str, tuple[str, ...]]:
+    """검사 id → 지금까지 연 힌트. 화면을 새로 열어도 본 힌트를 다시 보여 주기 위해 쓴다 (새 단계는 열지 않는다)."""
+    steps = dict(session.execute(select(LabHint.check_id, func.max(LabHint.step))
+                                 .where(LabHint.run_id == run.id).group_by(LabHint.check_id)).all())
+    if not steps:
+        return {}
+    lab = rendered_lab(run)
+    hidden = hidden_addresses(lab)
+    return {check_id: tuple(redact(h, hidden) for h in hints[:steps[check_id]])
+            for check_id, _, hints in numbered_checks(lab) if check_id in steps}
+
+
+def last_runs(session: Session) -> dict[str, LabRun]:
+    """시나리오 id → 가장 최근 실행."""
+    latest = select(func.max(LabRun.id)).group_by(LabRun.scenario_id)
+    return {run.scenario_id: run for run in session.scalars(select(LabRun).where(LabRun.id.in_(latest)))}
+
+
 def _hint_target(session: Session, run_id: int, checks: list[tuple[str, str, tuple[str, ...]]]) -> str:
     with_hints = [c[0] for c in checks if c[2]]
     if not with_hints:

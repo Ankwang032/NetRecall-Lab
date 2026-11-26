@@ -28,12 +28,24 @@ SessionDep = Annotated[Session, Depends(get_session)]
 RuntimeDep = Annotated[LabRuntime, Depends(get_lab_runtime)]
 
 
+class RunSummary(BaseModel):
+    run_id: int
+    status: str
+    level: str
+    attempts: int
+    hints_used: int
+    started_at: datetime
+    passed_at: datetime | None
+    finished_at: datetime | None
+
+
 class ScenarioInfo(BaseModel):
     id: str
     title: str
     type: str
     concepts: list[str]
     time_limit_minutes: int
+    last_run: RunSummary | None  # 가장 최근 실행
 
 
 class ScenarioErrorInfo(BaseModel):
@@ -76,6 +88,11 @@ class AddressInfo(BaseModel):
     address: str
 
 
+class LinkInfo(BaseModel):
+    a: str  # 노드:인터페이스
+    b: str
+
+
 class CheckInfo(BaseModel):
     id: str
     description: str
@@ -90,11 +107,14 @@ class RunResponse(BaseModel):
     networks: dict[str, str]    # 대역 이름 → 이번 실행의 대역
     addresses: list[AddressInfo]  # 배포할 때 넣은 주소
     nodes: list[NodeInfo]
+    links: list[LinkInfo]
     level: str                  # easy | normal | hard
     hint_limit: int             # 검사마다 볼 수 있는 힌트 단계 수 (hard는 0)
     checks: list[CheckInfo]     # hard는 끝낼 때까지 비어 있다
     attempts: int
     hints_used: int
+    hints: dict[str, list[str]]  # 검사 id → 지금까지 연 힌트
+    last_attempt: AttemptResponse | None  # 마지막 검증
     started_at: datetime
     expires_at: datetime
     passed_at: datetime | None
@@ -123,11 +143,15 @@ class AttemptResponse(BaseModel):
 
 
 @router.get("/labs")
-def list_labs(request: Request) -> ScenarioListResponse:
+def list_labs(request: Request, session: SessionDep, runtime: RuntimeDep) -> ScenarioListResponse:
+    labs.expire_overdue(session, runtime, utcnow())
     scenarios, errors = labs.load_scenarios(_scenarios_dir(request))
+    last = labs.last_runs(session)
     return ScenarioListResponse(
         scenarios=[ScenarioInfo(id=s.id, title=s.title, type=s.type, concepts=list(s.concepts),
-                                time_limit_minutes=s.time_limit_minutes) for s in scenarios],
+                                time_limit_minutes=s.time_limit_minutes,
+                                last_run=_summary(session, last[s.id]) if s.id in last else None)
+                   for s in scenarios],
         errors=[ScenarioErrorInfo(scenario=name, message=message) for name, message in errors],
     )
 
@@ -200,7 +224,7 @@ def finish(run_id: int, request: Request, session: SessionDep, runtime: RuntimeD
 
 def run_response(session: Session, run: LabRun, scenarios_dir: Path) -> RunResponse:
     lab = labs.rendered_lab(run)
-    attempts = [a for a in labs.attempts_of(session, run.id) if a.kind == "verify"]
+    attempts = _verified(session, run)
     passed_at = next((a.attempted_at for a in attempts if a.passed), None)
     scenario = next((s for s in labs.load_scenarios(scenarios_dir)[0] if s.id == run.scenario_id), None)
     return RunResponse(
@@ -209,9 +233,12 @@ def run_response(session: Session, run: LabRun, scenarios_dir: Path) -> RunRespo
         addresses=[AddressInfo(interface=str(e), address=a) for e, a in lab.preset_addresses],
         nodes=[NodeInfo(name=n.name, kind=n.kind, connect=_connect(lab.run_name, n.name, n.kind))
                for n in lab.topology.nodes],
+        links=[LinkInfo(a=str(link.a), b=str(link.b)) for link in lab.topology.links],
         level=run.level, hint_limit=labs.LEVELS[run.level],
         checks=[] if _hidden(run) else [CheckInfo(id=c.id, description=c.description) for c in lab.checks],
         attempts=len(attempts), hints_used=labs.hints_used(session, run.id),
+        hints={check_id: list(hints) for check_id, hints in labs.opened_hints(session, run).items()},
+        last_attempt=attempt_response(session, attempts[-1], run) if attempts else None,
         started_at=to_kst(run.started_at), expires_at=to_kst(run.expires_at),
         passed_at=to_kst(passed_at) if passed_at else None,
         finished_at=to_kst(run.finished_at) if run.finished_at else None,
@@ -236,6 +263,20 @@ def attempt_response(session: Session, attempt: LabAttempt, run: LabRun) -> Atte
                            attempted_at=to_kst(attempt.attempted_at),
                            passed_count=sum(r.passed for r in results), total_count=len(results),
                            results=[] if _hidden(run) else results)
+
+
+def _summary(session: Session, run: LabRun) -> RunSummary:
+    attempts = _verified(session, run)
+    passed_at = next((a.attempted_at for a in attempts if a.passed), None)
+    return RunSummary(run_id=run.id, status=run.status, level=run.level, attempts=len(attempts),
+                      hints_used=labs.hints_used(session, run.id), started_at=to_kst(run.started_at),
+                      passed_at=to_kst(passed_at) if passed_at else None,
+                      finished_at=to_kst(run.finished_at) if run.finished_at else None)
+
+
+def _verified(session: Session, run: LabRun) -> list[LabAttempt]:
+    """검증 시도만. 끝낼 때 상태를 모은 기록(final)은 뺀다."""
+    return [a for a in labs.attempts_of(session, run.id) if a.kind == "verify"]
 
 
 def _hidden(run: LabRun) -> bool:

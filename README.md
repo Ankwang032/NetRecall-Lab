@@ -21,6 +21,8 @@ uvicorn backend.main:create_app --factory --reload --env-file .env
 - 화면: http://127.0.0.1:8000/ (Codespaces는 포트 탭의 8000번 주소). UI를 빌드하지 않았으면 `/`는 404입니다
   - 학습: 원래 질문에 답 → AI 평가 → (필요하면) AI 변형 질문에 한 번 더 답 → 등급 선택 → 다음 카드
   - 개념 추가: .md 파일을 끌어다 놓으면 형식을 검사하고, 모두 통과하면 개념 폴더에 저장한 뒤 동기화합니다
+  - 실습(`/labs`): 아래 "실습" 절의 준비가 필요합니다. 도움 수준을 골라 시작 → 접속 명령을 자기 터미널에서 실행해 설정 → 검증·힌트 → 끝내기
+  - 화면 경로(`/labs` 등)는 API 경로와 겹칩니다. 브라우저 주소창으로 열면(Accept: text/html) 화면을, 화면의 요청에는 API 응답을 줍니다
 - UI를 고칠 때는 `cd frontend && npm run dev`로 Vite 서버(5173번)를 띄우면 저장하자마자 반영됩니다. API 요청은 8000번 FastAPI로 넘어갑니다
 - UI는 React + TypeScript + Tailwind CSS + shadcn/ui(Radix)입니다. 컴포넌트는 `npx shadcn@latest add <이름>`으로 추가합니다 (`frontend/components.json`)
 
@@ -78,9 +80,9 @@ python -m backend.cli --env-file .env lab finish          # 정리
 
 API:
 
-- `GET /labs`: 실습 시나리오 목록 (`lab_scenarios/`)
+- `GET /labs`: 실습 시나리오 목록 (`lab_scenarios/`)과 시나리오별 마지막 실행(`last_run`)
 - `POST /labs/{id}/runs` (`{"evaluation_id": 3, "level": "normal"}` 모두 선택): 배포. `level`은 도움 수준으로 `easy`(힌트 3단계)·`normal`(2단계)·`hard`(힌트 없음, 끝낼 때까지 검사 목록·검사별 결과를 숨김). 응답에 목표, 대역, 배포한 주소, 노드별 접속 명령. 진행 중인 실습이 있으면 409, 배포 실패는 502
-- `GET /lab-runs/current`: 진행 중인 실습 (없으면 `null`), `GET /lab-runs/{id}`
+- `GET /lab-runs/current`: 진행 중인 실습 (없으면 `null`), `GET /lab-runs/{id}`. 링크(`links`), 마지막 검증 결과(`last_attempt`), 지금까지 연 힌트(`hints`)도 준다 (새 단계는 열지 않음)
 - `POST /lab-runs/{id}/attempts`: 검증. 검사별 통과 여부·이유·출력. 학습자에게 주지 않은 목표 주소는 `[pc1:eth1 목표 주소]`로 가린다
 - `POST /lab-runs/{id}/hints` (`{"check_id": "pc2-route"}`은 선택): 힌트를 한 단계 더 연다. 검사를 빼면 마지막 검증에서 처음 실패한 검사. 본 힌트는 기록에 남는다
 - `POST /lab-runs/{id}/finish`: 마지막 상태를 남기고 정리

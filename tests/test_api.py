@@ -131,6 +131,23 @@ def test_serves_built_ui_at_root(tmp_path):
         assert c.get("/reviews/due").json() == []
 
 
+def test_address_bar_gets_ui_on_api_paths(tmp_path):
+    ui = tmp_path / "dist"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<title>NetRecall Lab</title>", encoding="utf-8")
+    (ui / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    app = create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES, frontend_dir=ui)
+    page = {"accept": "text/html,application/xhtml+xml,*/*;q=0.8"}  # 브라우저 주소창
+    with TestClient(app) as c:
+        res = c.get("/labs", headers=page)
+        assert "NetRecall Lab" in res.text  # 화면 경로 /labs = API GET /labs
+        assert (res.headers["vary"], res.headers["cache-control"]) == ("Accept", "no-cache")  # fetch가 캐시를 쓰지 않게
+        assert "scenarios" in c.get("/labs").json()                  # 화면의 fetch (Accept: */*)
+        assert c.get("/assets/app.js", headers=page).text == "console.log(1)"
+        assert "swagger" in c.get("/docs", headers=page).text.lower()
+        assert c.post("/reviews", headers=page, json={}).status_code == 422  # GET만 바꾼다
+
+
 def test_root_is_404_without_built_ui(tmp_path):
     app = create_app(f"sqlite:///{tmp_path / 'api.db'}", SAMPLES, frontend_dir=tmp_path / "없음")
     with TestClient(app) as c:

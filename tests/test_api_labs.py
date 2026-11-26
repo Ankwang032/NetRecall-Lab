@@ -27,9 +27,30 @@ def test_list_labs(client):
     body = client.get("/labs").json()
     assert body["scenarios"] == [{
         "id": "LAB-001", "title": "대역의 첫 주소와 마지막 주소로 통신하기", "type": "build",
-        "concepts": ["NET-005"], "time_limit_minutes": 60,
+        "concepts": ["NET-005"], "time_limit_minutes": 60, "last_run": None,
     }]
     assert body["errors"] == []
+
+
+def test_list_labs_shows_last_run(client, runtime):
+    client.post("/labs/LAB-001/runs")
+    client.post("/lab-runs/1/finish")
+    client.post("/labs/LAB-001/runs", json={"level": "easy"})
+    client.post("/lab-runs/2/hints")
+    solve_lab_001(runtime)
+    client.post("/lab-runs/2/attempts")
+    last = client.get("/labs").json()["scenarios"][0]["last_run"]
+    assert {k: last[k] for k in ("run_id", "status", "level", "attempts", "hints_used", "finished_at")} == \
+        {"run_id": 2, "status": "passed", "level": "easy", "attempts": 1, "hints_used": 1, "finished_at": None}
+    assert last["passed_at"].endswith("+09:00")
+
+
+def test_list_labs_checks_time_limit(client, runtime, monkeypatch):
+    client.post("/labs/LAB-001/runs")
+    later = utcnow() + timedelta(minutes=61)
+    monkeypatch.setattr(labs_api, "utcnow", lambda: later)
+    assert client.get("/labs").json()["scenarios"][0]["last_run"]["status"] == "expired"
+    assert runtime.list_runs() == []
 
 
 def test_repo_scenarios_are_served_by_default(tmp_path):
@@ -48,6 +69,8 @@ def test_full_run(client, runtime):
         {"name": "pc2", "kind": "host", "connect": "docker exec -it clab-nr-1-pc2 sh"},
     ]
     assert run["addresses"] == []
+    assert run["links"] == [{"a": "pc1:eth1", "b": "pc2:eth1"}]
+    assert (run["hints"], run["last_attempt"]) == ({}, None)
     assert [c["id"] for c in run["checks"]] == ["pc1-address", "pc2-address", "pc1-to-pc2", "pc2-to-pc1"]
     assert FIRST not in str(run) and LAST not in str(run)  # 정답 주소를 내보내지 않는다
     assert run["started_at"].endswith("+09:00") and run["attempts"] == 0
@@ -70,6 +93,7 @@ def test_full_run(client, runtime):
     assert (attempt["passed"], attempt["run_status"]) == (True, "passed")
     run = client.get("/lab-runs/1").json()
     assert run["attempts"] == 2 and run["passed_at"] == attempt["attempted_at"]
+    assert run["last_attempt"] == attempt  # 화면을 새로 열어도 마지막 검증 결과를 보여 준다
 
     res = client.post("/lab-runs/1/finish")
     assert res.status_code == 200
@@ -152,6 +176,9 @@ def test_hints(client, runtime):
     third = client.post("/lab-runs/1/hints", json={"check_id": "pc1-address"}).json()
     assert (len(second["hints"]), second["new"], len(third["hints"]), third["new"]) == (2, True, 2, False)
     assert FIRST not in str(third)
+    run = client.get("/lab-runs/1").json()
+    assert run["hints_used"] == 2
+    assert run["hints"] == {"pc1-address": third["hints"]}  # 새 단계를 열지 않고 본 힌트만
     assert client.get("/lab-runs/1").json()["hints_used"] == 2
 
     assert client.post("/lab-runs/1/hints", json={"check_id": "nope"}).status_code == 404
@@ -170,9 +197,11 @@ def test_hard_level_hides_checks_and_results_until_finished(client, runtime):
         runtime.responses[(node, ADDR)] = ExecResult(0, addr_json({"eth1": []}), "")
     attempt = client.post("/lab-runs/1/attempts").json()
     assert (attempt["passed"], attempt["passed_count"], attempt["total_count"], attempt["results"]) == (False, 1, 5, [])
+    assert client.get("/lab-runs/1").json()["last_attempt"]["results"] == []
 
     finished = client.post("/lab-runs/1/finish").json()
     assert [c["id"] for c in finished["checks"]] == ["pc1-address", "pc2-address", "pc1-to-pc2", "pc2-to-pc1"]
+    assert len(finished["last_attempt"]["results"]) == 5  # 끝나면 마지막 검증의 검사별 결과도 보여 준다
 
 
 def test_level_must_be_known(client):

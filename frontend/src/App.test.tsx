@@ -78,6 +78,7 @@ const count = (calls: { route: string }[], route: string) => calls.filter((c) =>
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.replaceState(null, "", "/"); // 다음 테스트는 첫 화면에서 시작한다
 });
 
 test("원래 질문 → AI 평가 → 변형 질문 → AI 평가 → 등급 → 다음 카드", async () => {
@@ -440,4 +441,226 @@ test("하위 페이지가 없으면 그 페이지를 가져오고, Notion 오류
   const box = (await within(dialog).findByRole("checkbox", { name: "정적 라우팅" })) as HTMLButtonElement;
   expect(box.getAttribute("data-state")).toBe("checked");
   expect(within(dialog).getByRole("button", { name: "1개 가져오기" })).toBeTruthy();
+});
+
+// ---- 실습 화면 ----
+
+const LAB_LIST = {
+  scenarios: [
+    {
+      id: "LAB-001", title: "대역의 첫 주소와 마지막 주소로 통신하기", type: "build", concepts: ["NET-005"],
+      time_limit_minutes: 60,
+      last_run: {
+        run_id: 1, status: "passed", level: "normal", attempts: 2, hints_used: 1, started_at: "2026-11-25T14:00:00+09:00",
+        passed_at: "2026-11-25T14:12:00+09:00", finished_at: "2026-11-25T14:13:00+09:00",
+      },
+    },
+    { id: "LAB-002", title: "라우터 두 대 너머로 통신하기", type: "build", concepts: ["NET-010"], time_limit_minutes: 60, last_run: null },
+  ],
+  errors: [],
+};
+
+const RUN = {
+  run_id: 3, scenario_id: "LAB-002", title: "라우터 두 대 너머로 통신하기", status: "active",
+  goal: "PC1과 PC2가 서로 ping되게 하라. 동적 라우팅 프로토콜은 쓰지 않는다.",
+  networks: { lan1: "10.1.2.0/24", lan2: "10.3.4.0/24", transit: "172.16.0.0/30" },
+  addresses: [
+    { interface: "pc1:eth1", address: "10.1.2.10/24" },
+    { interface: "r1:eth1", address: "10.1.2.1/24" },
+    { interface: "r1:eth2", address: "172.16.0.1/30" },
+  ],
+  nodes: [
+    { name: "pc1", kind: "host", connect: "docker exec -it clab-nr-3-pc1 sh" },
+    { name: "r1", kind: "router", connect: "docker exec -it clab-nr-3-r1 vtysh" },
+    { name: "r2", kind: "router", connect: "docker exec -it clab-nr-3-r2 vtysh" },
+  ],
+  links: [{ a: "pc1:eth1", b: "r1:eth1" }, { a: "r1:eth2", b: "r2:eth2" }],
+  level: "normal", hint_limit: 2,
+  checks: [
+    { id: "pc1-to-pc2", description: "PC1 → PC2 ping" },
+    { id: "r1-route", description: "R1이 LAN2로 갈 때 직접 넣은 경로를 쓴다" },
+  ],
+  attempts: 0, hints_used: 0, hints: {}, last_attempt: null,
+  started_at: "2026-11-26T13:00:00+09:00", expires_at: new Date(Date.now() + 42 * 60_000).toISOString(),
+  passed_at: null, finished_at: null, error: null,
+};
+
+const ATTEMPT = {
+  attempt_id: 1, run_id: 3, run_status: "active", passed: false, attempted_at: "2026-11-26T13:10:00+09:00",
+  passed_count: 1, total_count: 3,
+  results: [
+    { check_id: "pc1-to-pc2", description: "PC1 → PC2 ping", kind: "ping", passed: false,
+      message: "10.3.4.10에서 응답이 없습니다", output: "3 packets transmitted, 0 received, 100% packet loss" },
+    { check_id: "r1-route", description: "R1이 LAN2로 갈 때 직접 넣은 경로를 쓴다", kind: "route", passed: false,
+      message: "10.3.4.10으로 가는 경로가 없습니다", output: "" },
+    { check_id: "auto:unique-addresses", description: "검사가 가리키는 주소가 의도한 인터페이스에만 있다", kind: "unique",
+      passed: true, message: "", output: "" },
+  ],
+};
+
+const FINISHED = { ...RUN, status: "abandoned", finished_at: "2026-11-26T13:20:00+09:00" };
+
+function openLabs(path = "/labs") {
+  window.history.pushState(null, "", path);
+  render(<App />);
+}
+
+test("사이드바로 실습 목록을 열고, 도움 수준을 골라 시작하면 실행 화면을 보여 준다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, null],
+    "GET /labs": () => [200, LAB_LIST],
+    "POST /labs/LAB-002/runs": () => [201, RUN],
+  });
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(screen.getByRole("link", { name: "실습" }));
+  expect(await screen.findByRole("heading", { name: "실습" })).toBeTruthy();
+  const [first, second] = screen.getAllByRole("listitem");
+  expect(within(first).getByText("통과")).toBeTruthy(); // 마지막 실행 결과
+  expect(within(first).getByText(/시도 2번 · 힌트 1번/)).toBeTruthy();
+  expect(within(second).getByText("아직 해 보지 않았습니다")).toBeTruthy();
+
+  await user.click(within(second).getByRole("button", { name: "시작" }));
+  const dialog = await screen.findByRole("dialog", { name: "LAB-002 시작" });
+  expect((within(dialog).getByRole("radio", { name: /보통/ }) as HTMLInputElement).checked).toBe(true);
+  await user.click(within(dialog).getByRole("radio", { name: /쉬움/ }));
+  await user.click(within(dialog).getByRole("button", { name: "시작" }));
+
+  expect(await screen.findByRole("heading", { name: RUN.title })).toBeTruthy();
+  expect(calls.find((c) => c.route === "POST /labs/LAB-002/runs")?.body).toEqual({ level: "easy" });
+  expect(screen.getByText("172.16.0.0/30")).toBeTruthy();
+  expect(screen.getByRole("img", { name: /토폴로지: pc1:eth1 — r1:eth1, r1:eth2 — r2:eth2, pc1:eth1 10.1.2.10\/24/ })).toBeTruthy();
+  expect(screen.getByText(/남은 시간/)).toBeTruthy();
+  expect(screen.getAllByText("검증 전")).toHaveLength(2);
+
+  await user.click(screen.getByRole("button", { name: "r1 접속 명령 복사" }));
+  expect(await navigator.clipboard.readText()).toBe("docker exec -it clab-nr-3-r1 vtysh");
+});
+
+test("검증 결과를 검사별로 보여 주고, 힌트를 한 단계씩 연다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, RUN],
+    "GET /labs": () => [200, LAB_LIST],
+    "POST /lab-runs/3/attempts": () => [201, ATTEMPT],
+    "GET /lab-runs/3": () => [200, { ...RUN, attempts: 1, last_attempt: ATTEMPT }],
+    "POST /lab-runs/3/hints": (body) => [200, {
+      check_id: body.check_id, number: 2, description: "R1이 LAN2로 갈 때 직접 넣은 경로를 쓴다",
+      hints: ["라우터는 직접 연결된 대역만 압니다."], new: true, limit: 2, total: 3,
+    }],
+  });
+  const user = userEvent.setup();
+  openLabs();
+
+  await user.click(await screen.findByRole("button", { name: "검증" }));
+  expect(await screen.findByText("3개 중 1개 통과")).toBeTruthy();
+  expect(screen.getAllByText("실패")).toHaveLength(2);
+  expect(screen.getByText("3 packets transmitted, 0 received, 100% packet loss")).toBeTruthy();
+  expect(screen.getByText("10.3.4.10으로 가는 경로가 없습니다")).toBeTruthy();
+  expect(screen.getByText("검사가 가리키는 주소가 의도한 인터페이스에만 있다")).toBeTruthy(); // 주소 유일성 자동 검사
+
+  const row = screen.getByText("R1이 LAN2로 갈 때 직접 넣은 경로를 쓴다").closest("li")!;
+  await user.click(within(row).getByRole("button", { name: "힌트 0/2" }));
+  expect(await within(row).findByText("라우터는 직접 연결된 대역만 압니다.")).toBeTruthy();
+  expect(within(row).getByRole("button", { name: "힌트 1/2" })).toBeTruthy();
+  expect(calls.find((c) => c.route === "POST /lab-runs/3/hints")?.body).toEqual({ check_id: "r1-route" });
+});
+
+test("어려움은 검사별 결과 대신 통과 개수만 보여 주고 힌트 버튼이 없다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, {
+      ...RUN, level: "hard", hint_limit: 0, checks: [], attempts: 1, last_attempt: { ...ATTEMPT, results: [] },
+    }],
+    "GET /labs": () => [200, LAB_LIST],
+  });
+  openLabs();
+
+  expect(await screen.findByText("3개 중 1개 통과")).toBeTruthy();
+  expect(screen.getByText(/어려움에서는 검사 목록과 검사별 결과를 끝낼 때 보여 줍니다/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /힌트/ })).toBeNull();
+  expect(screen.queryByText("PC1 → PC2 ping")).toBeNull();
+});
+
+test("끝내기는 확인을 받고, 끝난 뒤 결과와 목록으로 돌아갈 버튼을 보여 준다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, RUN],
+    "GET /labs": () => [200, LAB_LIST],
+    "POST /lab-runs/3/finish": () => [200, FINISHED],
+  });
+  const user = userEvent.setup();
+  openLabs();
+
+  await user.click(await screen.findByRole("button", { name: "끝내기" }));
+  const dialog = await screen.findByRole("dialog", { name: "실습을 끝낼까요?" });
+  expect(dialog.textContent).toContain("실습 환경이 지워집니다. 마지막 설정은 기록에 남습니다.");
+  expect(dialog.textContent).toContain("포기로 기록됩니다");
+  await user.click(within(dialog).getByRole("button", { name: "끝내기" }));
+
+  expect(await screen.findByText("실습을 끝냈습니다")).toBeTruthy();
+  expect(screen.getByText("포기")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "검증" })).toBeNull();
+  expect(screen.queryByText("노드 접속")).toBeNull(); // 환경이 없으니 접속 명령도 없다
+  expect(count(calls, "POST /lab-runs/3/finish")).toBe(1);
+
+  await user.click(screen.getByRole("button", { name: "목록으로" }));
+  expect(await screen.findByRole("heading", { name: "실습" })).toBeTruthy();
+});
+
+test("처음부터 다시는 지금 실행을 끝내고 같은 도움 수준으로 새로 시작한다", async () => {
+  const calls = mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, { ...RUN, level: "easy", hint_limit: 3 }],
+    "GET /labs": () => [200, LAB_LIST],
+    "POST /lab-runs/3/finish": () => [200, FINISHED],
+    "POST /labs/LAB-002/runs": () => [201, { ...RUN, run_id: 4, level: "easy", networks: { ...RUN.networks, lan2: "10.9.9.0/24" } }],
+  });
+  const user = userEvent.setup();
+  openLabs();
+
+  await user.click(await screen.findByRole("button", { name: "처음부터 다시" }));
+  const dialog = await screen.findByRole("dialog", { name: "처음부터 다시 할까요?" });
+  expect(dialog.textContent).toContain("주소 대역이 새로 정해지고");
+  await user.click(within(dialog).getByRole("button", { name: "다시 시작" }));
+
+  expect(await screen.findByText("10.9.9.0/24")).toBeTruthy();
+  const order = calls.map((c) => c.route).filter((r) => r.startsWith("POST"));
+  expect(order).toEqual(["POST /lab-runs/3/finish", "POST /labs/LAB-002/runs"]);
+  expect(calls.find((c) => c.route === "POST /labs/LAB-002/runs")?.body).toEqual({ level: "easy" });
+});
+
+test("답안 평가의 추천 실습에서 실습 열기를 누르면 그 실습의 시작 창이 열린다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, [CARD]],
+    "POST /cards/7/questions/original": () => [201, ORIGINAL],
+    "POST /questions/3/answers": () => [201, EVALUATION],
+    "GET /lab-runs/current": () => [200, null],
+    "GET /labs": () => [200, LAB_LIST],
+  });
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(await screen.findByRole("button", { name: CARD.question }));
+  await user.type(screen.getByLabelText("내 답안"), "답안");
+  await user.click(screen.getByRole("button", { name: "답안 제출" }));
+  await user.click(await screen.findByRole("link", { name: "실습 열기" }));
+
+  expect(await screen.findByRole("dialog", { name: "LAB-002 시작" })).toBeTruthy();
+  expect(window.location.search).toBe(""); // 새로고침해도 시작 창을 또 열지 않는다
+});
+
+test("진행 중인 실습이 있으면 추천 실습을 바로 시작하지 않고 알린다", async () => {
+  mockApi({
+    "GET /reviews/due": () => [200, []],
+    "GET /lab-runs/current": () => [200, RUN],
+    "GET /labs": () => [200, LAB_LIST],
+  });
+  openLabs("/labs?start=LAB-001");
+
+  expect(await screen.findByText(/진행 중인 실습이 있어 추천 실습 LAB-001을\(를\) 바로 시작하지 않았습니다/)).toBeTruthy();
+  expect(screen.getByRole("heading", { name: RUN.title })).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

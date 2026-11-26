@@ -1,6 +1,8 @@
 import { CheckCircleIcon, FlaskIcon, WarningCircleIcon, XCircleIcon, type Icon } from "@phosphor-icons/react";
+import { Link } from "react-router";
 import type { Evaluation } from "@/api";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +58,9 @@ export function EvaluationView({ evaluation: ev }: { evaluation: Evaluation }) {
           <FlaskIcon className="size-4 text-primary" aria-hidden />
           추천 실습
           <Badge variant="outline" className="font-mono">{ev.recommended_lab}</Badge>
+          <Button variant="link" size="sm" asChild>
+            <Link to={`/labs?start=${encodeURIComponent(ev.recommended_lab)}`}>실습 열기</Link>
+          </Button>
         </p>
       )}
       <p className="text-xs text-muted-foreground">평가 모델 {ev.model}</p>
