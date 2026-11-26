@@ -61,6 +61,7 @@ function Shell() {
   const [syncing, setSyncing] = useState(false);
   const [syncIssues, setSyncIssues] = useState<SyncResponse | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [topic, setTopic] = useState<string | null>(null); // 학습을 마치고 돌아와도 고른 주제를 유지한다
 
   async function loadCards() {
     try {
@@ -103,11 +104,10 @@ function Shell() {
     }
   }
 
-  // 고른 카드부터 목록 순서대로 이어서 학습한다
-  function start(card: DueCard) {
-    if (!cards) return;
-    const i = cards.indexOf(card);
-    setSession([...cards.slice(i), ...cards.slice(0, i)]);
+  // 고른 묶음(전체·주제·개념)을 first부터 순서대로 이어서 학습한다
+  function start(pool: DueCard[], first: DueCard = pool[0]) {
+    const i = pool.indexOf(first);
+    setSession([...pool.slice(i), ...pool.slice(0, i)]);
   }
 
   function exitSession() {
@@ -118,30 +118,30 @@ function Shell() {
   return (
     <div className="flex min-h-dvh">
       {/* 좁은 화면에서는 아이콘만 보인다 */}
-      <aside className="sticky top-0 flex h-dvh w-14 shrink-0 flex-col gap-1 border-r bg-card p-2 md:w-56">
-        <div className="mb-3 flex h-10 items-center gap-2 px-1.5 font-semibold tracking-tight">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <GraphIcon weight="bold" className="size-4" aria-hidden />
+      <aside className="sticky top-0 flex h-dvh w-16 shrink-0 flex-col gap-1.5 border-r bg-card p-2.5 md:w-68 md:p-3">
+        <div className="mb-4 flex h-12 items-center gap-2.5 px-1.5 text-lg font-semibold tracking-tight">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <GraphIcon weight="bold" className="size-5" aria-hidden />
           </span>
           <span className="hidden md:inline">NetRecall Lab</span>
         </div>
-        <nav aria-label="화면" className="flex flex-col gap-1">
+        <nav aria-label="화면" className="flex flex-col gap-1.5">
           {NAV.map(({ to, label, icon: IconComponent }) => (
             <NavLink key={to} to={to} end title={label}
               className={({ isActive }) => cn(
-                "flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                "flex h-11 items-center gap-3 rounded-lg px-3 text-base font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                 isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
               )}>
-              <IconComponent className="size-4.5 shrink-0" aria-hidden />
+              <IconComponent className="size-5 shrink-0" aria-hidden />
               <span className="hidden md:inline">{label}</span>
             </NavLink>
           ))}
         </nav>
-        <div className="mt-auto flex flex-col gap-1">
-          <Button variant="ghost" className="justify-start" onClick={() => setUploadOpen(true)} title="개념 추가">
+        <div className="mt-auto flex flex-col gap-1.5">
+          <Button variant="ghost" className="h-11 justify-start gap-3 px-3 text-base [&_svg:not([class*='size-'])]:size-5" onClick={() => setUploadOpen(true)} title="개념 추가">
             <FilePlusIcon aria-hidden /> <span className="hidden md:inline">개념 추가</span>
           </Button>
-          <Button variant="ghost" className="justify-start" onClick={runSync} disabled={syncing} title="동기화">
+          <Button variant="ghost" className="h-11 justify-start gap-3 px-3 text-base [&_svg:not([class*='size-'])]:size-5" onClick={runSync} disabled={syncing} title="동기화">
             {syncing ? <SpinnerIcon className="animate-spin" aria-hidden /> : <ArrowsClockwiseIcon aria-hidden />}
             <span className="hidden md:inline">동기화</span>
           </Button>
@@ -157,6 +157,8 @@ function Shell() {
             ) : (
               <ReviewList
                 cards={cards}
+                topic={topic}
+                onTopic={setTopic}
                 error={loadError}
                 syncIssues={syncIssues}
                 onStart={start}

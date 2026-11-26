@@ -124,6 +124,39 @@ test("원래 질문 → AI 평가 → 변형 질문 → AI 평가 → 등급 →
   expect(calls.find((c) => c.route === "POST /reviews")?.body).toEqual({ card_id: 7, rating: 3 });
 });
 
+test("주제(카테고리)를 고르면 그 주제의 카드만 학습하고, 돌아와도 고른 주제가 남는다", async () => {
+  const routing = [{ ...CARD, category: "라우팅" }, { ...CARD2, category: "라우팅" }];
+  const basics = { ...CARD, card_id: 9, concept_id: "NET-005", concept_title: "IP 주소", category: "네트워크 기본", question: "서브넷이란?" };
+  mockApi({ "GET /reviews/due": () => [200, [basics, ...routing]] });
+  const user = userEvent.setup();
+  render(<App />);
+
+  const topics = await screen.findByRole("group", { name: "주제" });
+  expect(within(topics).getAllByRole("button").map((b) => b.textContent)).toEqual(["전체3", "라우팅2", "네트워크 기본1"]);
+  await user.click(within(topics).getByRole("button", { name: /라우팅/ }));
+  expect(within(topics).getByRole("button", { name: /라우팅/ }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByText("라우팅 · 카드 2장 · 개념 1개")).toBeTruthy();
+  expect(screen.queryByText("서브넷이란?")).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "라우팅 학습 시작" }));
+  expect(screen.getByRole("heading", { name: CARD.question })).toBeTruthy();
+  expect(screen.getByText("1 / 2")).toBeTruthy(); // 네트워크 기본 카드는 빠졌다
+
+  await user.click(screen.getByRole("button", { name: "목록" }));
+  expect(await screen.findByText("라우팅 · 카드 2장 · 개념 1개")).toBeTruthy();
+});
+
+test("개념 묶음의 '이 개념만'은 그 개념의 카드만 학습한다", async () => {
+  const other = { ...CARD, card_id: 9, concept_id: "NET-005", concept_title: "IP 주소", question: "서브넷이란?" };
+  mockApi({ "GET /reviews/due": () => [200, [CARD, other, CARD2]] });
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(await screen.findByRole("button", { name: "이 개념만 학습 (Static Routing)" }));
+  expect(screen.getByRole("heading", { name: CARD.question })).toBeTruthy();
+  expect(screen.getByText("1 / 2")).toBeTruthy();
+});
+
 test("1차 평가만 보고 등급을 고르면 마지막 카드 뒤 목록으로 돌아간다", async () => {
   let due = [CARD];
   const calls = mockApi({

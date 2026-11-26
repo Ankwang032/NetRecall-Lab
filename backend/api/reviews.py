@@ -23,6 +23,7 @@ class DueCard(BaseModel):
     card_id: int
     concept_id: str
     concept_title: str
+    category: str | None  # 주제별 학습에 쓴다
     question: str
     due_at: datetime
 
@@ -42,7 +43,7 @@ class ReviewResponse(BaseModel):
 @router.get("/due")
 def list_due(session: SessionDep) -> list[DueCard]:
     return [
-        DueCard(card_id=card.id, concept_id=concept.id, concept_title=concept.title,
+        DueCard(card_id=card.id, concept_id=concept.id, concept_title=concept.title, category=concept.category,
                 question=card.question, due_at=to_kst(card.due_at))
         for card, concept in due_cards(session, utcnow())
     ]

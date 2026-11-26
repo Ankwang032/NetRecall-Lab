@@ -12,6 +12,7 @@ export type DueCard = {
   card_id: number;
   concept_id: string;
   concept_title: string;
+  category: string | null;
   question: string;
   due_at: string;
 };

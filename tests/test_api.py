@@ -80,7 +80,8 @@ def test_review_flow(client):
     due = client.get("/reviews/due").json()
     assert len(due) == 9  # 샘플 개념 3개 × 질문 3개
     first = due[0]
-    assert set(first) == {"card_id", "concept_id", "concept_title", "question", "due_at"}
+    assert set(first) == {"card_id", "concept_id", "concept_title", "category", "question", "due_at"}
+    assert {c["category"] for c in due} == {"Addressing", "Fundamentals", "Routing"}
     assert first["due_at"].endswith("+09:00")
 
     res = client.post("/reviews", json={"card_id": first["card_id"], "rating": 3})

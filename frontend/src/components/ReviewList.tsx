@@ -6,35 +6,52 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { todayKst } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type Props = {
   cards: DueCard[] | null;
+  topic: string | null; // 고른 카테고리. null이면 전체, ""는 카테고리 없는 개념
+  onTopic: (topic: string | null) => void;
   error: string | null;
   syncIssues: SyncResponse | null;
-  onStart: (card: DueCard) => void;
+  onStart: (pool: DueCard[], first?: DueCard) => void; // pool을 first부터 차례로 학습한다
   onUpload: () => void;
 };
 
-export function ReviewList({ cards, error, syncIssues, onStart, onUpload }: Props) {
-  const groups = groupByConcept(cards ?? []);
+export function ReviewList({ cards, topic, onTopic, error, syncIssues, onStart, onUpload }: Props) {
+  const topics = countTopics(cards ?? []);
+  // 고른 주제의 카드를 다 복습해 목록에서 사라졌으면 전체를 보여 준다
+  const active = topic !== null && topics.some((t) => t.key === topic) ? topic : null;
+  const visible = (cards ?? []).filter((c) => active === null || (c.category ?? "") === active);
+  const groups = groupByConcept(visible);
+  const activeLabel = topics.find((t) => t.key === active)?.label;
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm text-muted-foreground">{todayKst()}</p>
           <h1 className="text-2xl font-semibold tracking-tight">오늘의 복습</h1>
-          {cards && cards.length > 0 && (
+          {visible.length > 0 && (
             <p className="mt-1 text-sm text-muted-foreground">
-              카드 {cards.length}장 · 개념 {groups.length}개
+              {activeLabel && `${activeLabel} · `}카드 {visible.length}장 · 개념 {groups.length}개
             </p>
           )}
         </div>
-        {cards && cards.length > 0 && (
-          <Button size="lg" onClick={() => onStart(cards[0])}>
-            <PlayIcon weight="fill" aria-hidden /> 학습 시작
+        {visible.length > 0 && (
+          <Button size="lg" onClick={() => onStart(visible)}>
+            <PlayIcon weight="fill" aria-hidden /> {activeLabel ? `${activeLabel} 학습 시작` : "학습 시작"}
           </Button>
         )}
       </div>
+
+      {topics.length > 1 && (
+        <div role="group" aria-label="주제" className="flex flex-wrap gap-1.5">
+          <TopicButton label="전체" count={cards?.length ?? 0} pressed={active === null} onClick={() => onTopic(null)} />
+          {topics.map((t) => (
+            <TopicButton key={t.key} label={t.label} count={t.count} pressed={active === t.key} onClick={() => onTopic(t.key)} />
+          ))}
+        </div>
+      )}
 
       {syncIssues && <SyncIssues result={syncIssues} />}
       {error && (
@@ -66,16 +83,19 @@ export function ReviewList({ cards, error, syncIssues, onStart, onUpload }: Prop
         <div className="space-y-3">
           {groups.map(({ conceptId, title, cards: group }) => (
             <Card key={conceptId} className="gap-0 py-0">
-              <div className="flex items-center gap-2 border-b px-4 py-3">
+              <div className="flex items-center gap-2 border-b px-4 py-2">
                 <Badge variant="secondary" className="font-mono">{conceptId}</Badge>
                 <h2 className="font-medium">{title}</h2>
                 <span className="ml-auto text-xs text-muted-foreground">{group.length}장</span>
+                <Button variant="ghost" size="sm" onClick={() => onStart(group)} aria-label={`이 개념만 학습 (${title})`}>
+                  <PlayIcon aria-hidden /> 이 개념만
+                </Button>
               </div>
               <ul className="divide-y">
                 {group.map((card) => (
                   <li key={card.card_id}>
                     <button
-                      onClick={() => onStart(card)}
+                      onClick={() => onStart(visible, card)}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left text-[0.95rem] leading-relaxed transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
                     >
                       <span className="flex-1">{card.question}</span>
@@ -89,6 +109,26 @@ export function ReviewList({ cards, error, syncIssues, onStart, onUpload }: Prop
         </div>
       )}
     </div>
+  );
+}
+
+// 카테고리별 카드 수. 많은 순
+function countTopics(cards: DueCard[]) {
+  const counts = new Map<string, number>();
+  for (const card of cards) counts.set(card.category ?? "", (counts.get(card.category ?? "") ?? 0) + 1);
+  return [...counts]
+    .map(([key, count]) => ({ key, label: key || "분류 없음", count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ko"));
+}
+
+type TopicButtonProps = { label: string; count: number; pressed: boolean; onClick: () => void };
+
+function TopicButton({ label, count, pressed, onClick }: TopicButtonProps) {
+  return (
+    <Button variant={pressed ? "default" : "outline"} size="sm" aria-pressed={pressed} onClick={onClick}>
+      {label}
+      <span className={cn("tabular-nums", pressed ? "opacity-80" : "text-muted-foreground")}>{count}</span>
+    </Button>
   );
 }
 
