@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowsClockwiseIcon, BooksIcon, CardsIcon, FilePlusIcon, FlaskIcon, GraphIcon, SpinnerIcon, type Icon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, BooksIcon, CardsIcon, ChartBarIcon, FilePlusIcon, FlaskIcon, GraphIcon, SpinnerIcon, type Icon } from "@phosphor-icons/react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import { toast } from "sonner";
 import { api, ApiError, errorMessage, type DueCard, type SyncResponse } from "@/api";
 import { ConceptPage } from "@/components/ConceptPage";
 import { ConceptsPage } from "@/components/ConceptsPage";
+import { DashboardPage } from "@/components/DashboardPage";
 import { LabsPage } from "@/components/LabsPage";
 import { ReviewList } from "@/components/ReviewList";
 import { StudySession } from "@/components/StudySession";
@@ -53,6 +54,7 @@ export function App() {
 
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/", label: "오늘의 복습", icon: CardsIcon },
+  { to: "/dashboard", label: "대시보드", icon: ChartBarIcon },
   { to: "/concepts", label: "개념", icon: BooksIcon },
   { to: "/labs", label: "실습", icon: FlaskIcon },
 ];
@@ -167,6 +169,15 @@ function Shell() {
                 onStart={start}
                 onUpload={() => setUploadOpen(true)}
               />
+            )}
+          />
+          {/* 대시보드에서 연 학습 세션도 그 자리에서 보여 주고, 마치면 대시보드로 돌아온다 */}
+          <Route
+            path="/dashboard"
+            element={session ? (
+              <StudySession cards={session} onExit={exitSession} />
+            ) : (
+              <DashboardPage cards={cards} onStart={start} onRefresh={loadCards} />
             )}
           />
           <Route path="/concepts" element={<ConceptsPage />} />

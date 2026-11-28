@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from fsrs import Card, Rating, Scheduler
+from fsrs import Card, Rating, Scheduler, State
 
 DEFAULT_SCHEDULER = Scheduler()
 
@@ -35,3 +35,13 @@ def review(
     """rating: 1=Again, 2=Hard, 3=Good, 4=Easy"""
     card, log = scheduler.review_card(Card.from_dict(card_json), Rating(rating), now)
     return ReviewResult(card_json=card.to_dict(), due_at=card.due, log_json=log.to_dict())
+
+
+def stage(card_json: dict, mature_days: float) -> str:
+    """학습 단계: new(아직 복습하지 않음) | learning(Learning·Relearning) | review | mature(기억 안정성 mature_days일 이상)."""
+    card = Card.from_dict(card_json)
+    if card.last_review is None:
+        return "new"
+    if card.state == State.Review:
+        return "mature" if card.stability >= mature_days else "review"
+    return "learning"

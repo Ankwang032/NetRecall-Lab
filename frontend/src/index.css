@@ -19,6 +19,13 @@
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar: var(--sidebar);
     --color-chart-5: var(--chart-5);
+    --color-grade-again: var(--grade-again);
+    --color-grade-hard: var(--grade-hard);
+    --color-grade-good: var(--grade-good);
+    --color-grade-easy: var(--grade-easy);
+    --color-stage-learning: var(--stage-learning);
+    --color-stage-review: var(--stage-review);
+    --color-stage-mature: var(--stage-mature);
     --color-chart-4: var(--chart-4);
     --color-chart-3: var(--chart-3);
     --color-chart-2: var(--chart-2);
@@ -77,6 +84,15 @@
     --chart-3: #0d9488;
     --chart-4: #0f766e;
     --chart-5: #134e4a;
+    /* 대시보드 차트 (validate_palette.js로 확인). 등급은 발산형: 오답(Again·Hard)은 빨강, 정답(Good·Easy)은 청록,
+       양 끝(Again·Easy)이 진하다. 학습 단계는 청록 순서 단계, 새 카드는 빈 트랙(muted). 다크는 밝기를 뒤집는다 */
+    --grade-again: #b91c1c;
+    --grade-hard: #f87171;
+    --grade-good: #14b8a6;
+    --grade-easy: #115e59;
+    --stage-learning: #14b8a6;
+    --stage-review: #0f766e;
+    --stage-mature: #134e4a;
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
@@ -114,6 +130,13 @@
     --chart-3: #14b8a6;
     --chart-4: #2dd4bf;
     --chart-5: #99f6e4;
+    --grade-again: #f87171;
+    --grade-hard: #b91c1c;
+    --grade-good: #0f766e;
+    --grade-easy: #5eead4;
+    --stage-learning: #115e59;
+    --stage-review: #0d9488;
+    --stage-mature: #5eead4;
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);

@@ -224,6 +224,36 @@ export type LabHint = {
   total: number;
 };
 
+// ---- 대시보드 (backend/api/dashboard.py) ----
+
+export type Stages = { new: number; learning: number; review: number; mature: number };
+
+export type WeakConcept = {
+  concept_id: string;
+  title: string;
+  category: string | null;
+  signals: ("forgot" | "struggled" | "low_score")[];
+  again: number;
+  hard: number;
+  low_scores: number;
+  last_reviewed_at: string | null;
+  next_due_at: string | null;
+  lapses: { question: string; rating: number; reviewed_at: string }[]; // 근거: Again·Hard 기록 (최근 것부터)
+  low_evaluations: { question: string; score: number; submitted_at: string; missing_points: string[] }[];
+};
+
+export type DashboardSummary = {
+  today: { due: number; overdue: number; reviewed: number; concepts: number; cards: number; streak_days: number };
+  reviews_by_day: { date: string; again: number; hard: number; good: number; easy: number }[]; // 4주, 마지막이 오늘
+  due_by_day: { date: string; cards: number }[]; // 오늘부터 7일. 오늘 칸에는 밀린 카드도 들어간다
+  errors_by_week: { start: string; end: string; reviews: number; wrong: number }[]; // wrong = Again + Hard
+  stages: Stages;
+  categories: { category: string | null; stages: Stages; reviews: number; wrong: number }[]; // reviews·wrong은 최근 recent_days일
+  weak_concepts: WeakConcept[];
+  rules: { recent_days: number; forgot: number; struggled: number; low_score: number; low_score_count: number; mature_days: number };
+  labs: { scenario_id: string; title: string; runs: number; last_run: LabRunSummary | null }[];
+};
+
 // HTTP 상태를 함께 담는다. 503은 그 기능이 설정되지 않았다는 뜻이다
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -288,4 +318,5 @@ export const api = {
   finishLab: (runId: number) => request<LabRun>("POST", `/lab-runs/${runId}/finish`),
   terminalTicket: (runId: number, node: string, shell: string) =>
     request<{ ticket: string; node: string; shell: string }>("POST", `/lab-runs/${runId}/terminal-tickets`, { node, shell }),
+  dashboard: () => request<DashboardSummary>("GET", "/dashboard/summary"),
 };

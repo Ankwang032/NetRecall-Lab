@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.assessments import router as assessments_router
 from backend.api.concepts import router as concepts_router
+from backend.api.dashboard import router as dashboard_router
 from backend.api.lab_terminal import router as lab_terminal_router
 from backend.api.labs import router as labs_router
 from backend.api.notion import router as notion_router
@@ -90,6 +91,7 @@ def create_app(
     app.include_router(notion_router)
     app.include_router(labs_router)
     app.include_router(lab_terminal_router)
+    app.include_router(dashboard_router)
 
     # 빌드된 UI(frontend에서 npm run build)가 있으면 /에서 보여 준다. 위 API 경로가 먼저 매칭된다
     ui_dir = Path(frontend_dir or DEFAULT_FRONTEND_DIR)

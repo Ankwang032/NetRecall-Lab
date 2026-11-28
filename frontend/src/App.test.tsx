@@ -836,3 +836,140 @@ test("없는 개념은 알린다", async () => {
   render(<App />);
   expect(await screen.findByText("개념 NET-404이(가) 없습니다.")).toBeTruthy();
 });
+
+const day = (n: number) => `2026-${n > 30 ? "12" : "11"}-${String(n > 30 ? n - 30 : n).padStart(2, "0")}`;
+const SUMMARY = {
+  today: { due: 2, overdue: 1, reviewed: 3, concepts: 2, cards: 5, streak_days: 4 },
+  reviews_by_day: Array.from({ length: 28 }, (_, i) => ({ date: day(i + 1), again: 0, hard: 0, good: i === 20 ? 2 : 0, easy: 0 }))
+    .map((d, i) => (i === 27 ? { ...d, again: 1, hard: 1, good: 1 } : d)),
+  due_by_day: [2, 0, 1, 0, 0, 0, 0].map((cards, i) => ({ date: day(28 + i), cards })),
+  errors_by_week: [
+    { start: day(1), end: day(7), reviews: 0, wrong: 0 },
+    { start: day(8), end: day(14), reviews: 0, wrong: 0 },
+    { start: day(15), end: day(21), reviews: 2, wrong: 0 },
+    { start: day(22), end: day(28), reviews: 4, wrong: 1 },
+  ],
+  stages: { new: 2, learning: 1, review: 1, mature: 1 },
+  categories: [
+    { category: "라우팅", stages: { new: 1, learning: 1, review: 0, mature: 1 }, reviews: 4, wrong: 1 },
+    { category: "네트워크 기본", stages: { new: 1, learning: 0, review: 1, mature: 0 }, reviews: 2, wrong: 2 },
+  ],
+  weak_concepts: [
+    {
+      concept_id: "NET-010", title: "Static Routing", category: "라우팅", signals: ["forgot"], again: 2, hard: 0, low_scores: 0,
+      last_reviewed_at: "2026-11-28T00:20:00+09:00", next_due_at: "2026-11-16T09:00:00+09:00",
+      lapses: [
+        { question: "정적 라우팅이란?", rating: 1, reviewed_at: "2026-11-28T00:20:00+09:00" },
+        { question: "다음 홉이란?", rating: 1, reviewed_at: "2026-11-20T21:00:00+09:00" },
+      ],
+      low_evaluations: [],
+    },
+    {
+      concept_id: "NET-005", title: "IP 주소", category: "네트워크 기본", signals: ["low_score"], again: 0, hard: 0, low_scores: 2,
+      last_reviewed_at: null, next_due_at: "2026-12-03T09:00:00+09:00", lapses: [],
+      low_evaluations: [
+        { question: "서브넷이란?", score: 40, submitted_at: "2026-11-26T10:00:00+09:00", missing_points: ["브로드캐스트 주소"] },
+        { question: "서브넷이란?", score: 55, submitted_at: "2026-11-20T10:00:00+09:00", missing_points: [] },
+      ],
+    },
+  ],
+  rules: { recent_days: 30, forgot: 2, struggled: 3, low_score: 60, low_score_count: 2, mature_days: 21 },
+  labs: [
+    {
+      scenario_id: "LAB-001", title: "대역의 첫 주소와 마지막 주소로 통신하기", runs: 2,
+      last_run: {
+        run_id: 3, status: "passed", level: "normal", attempts: 2, attempts_to_pass: 2, hints_used: 0,
+        started_at: "2026-11-27T10:00:00+09:00", passed_at: "2026-11-27T10:12:00+09:00", finished_at: "2026-11-27T10:13:00+09:00",
+      },
+    },
+    { scenario_id: "LAB-002", title: "정적 라우팅", runs: 0, last_run: null },
+  ],
+};
+const ROUTING_DUE = [{ ...CARD, category: "라우팅" }, { ...CARD2, category: "라우팅" }];
+
+test("대시보드는 사이드바로 열고, 지표·차트·취약 개념·실습 이력을 보여 준다", async () => {
+  mockApi({ "GET /reviews/due": () => [200, ROUTING_DUE], "GET /dashboard/summary": () => [200, SUMMARY] });
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.click(await screen.findByRole("link", { name: "대시보드" }));
+  expect(await screen.findByText("밀린 복습 1장")).toBeTruthy();
+  expect(screen.getByRole("heading", { level: 1, name: "대시보드" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "학습 시작 · 2장" })).toBeTruthy();
+
+  // 차트의 칸마다 값을 접근성 이름으로 갖고, 같은 값을 표로도 볼 수 있다
+  expect(screen.getByLabelText("11월 28일 (토) 복습 3번: Again 1, Hard 1, Good 1, Easy 0")).toBeTruthy();
+  expect(screen.getByLabelText("11월 28일 (토) 복습 예정 2장")).toBeTruthy();
+  expect(screen.getByLabelText("최근 7일 오답률 25% (4번 중 1번)")).toBeTruthy();
+  expect(screen.getByLabelText("11/1~11/7 복습 기록 없음")).toBeTruthy();
+  expect(screen.getByLabelText("전체 5장: 익숙함 1, 복습 중 1, 학습 중 1, 새 카드 2")).toBeTruthy();
+  expect(screen.getAllByText("표로 보기")).toHaveLength(4); // 카테고리별 오답률은 줄마다 값을 글자로 쓴다
+
+  // 카테고리별 오답률은 높은 순 (Again·Hard 비율)
+  const rates = within(screen.getByRole("region", { name: "카테고리별 오답률" })).getAllByLabelText(/오답률/);
+  expect(rates.map((m) => m.getAttribute("aria-label"))).toEqual(["네트워크 기본 오답률 100% (2번 중 2번)", "라우팅 오답률 25% (4번 중 1번)"]);
+
+  const weak = within(screen.getByRole("list", { name: "취약 개념 목록" }));
+  expect(weak.getByText("잊음 · Again 2회")).toBeTruthy();
+  expect(weak.getByText("낮은 평가 · 2회")).toBeTruthy();
+  expect(weak.getByRole("button", { name: "Static Routing 복습 시작 (2장)" })).toBeTruthy();
+  expect(weak.getByText("다음 복습 12월 3일")).toBeTruthy(); // 지금 복습할 카드가 없는 개념
+  expect(weak.getByText("빠진 내용: 브로드캐스트 주소")).toBeTruthy();
+  expect(weak.getByRole("link", { name: "IP 주소" }).getAttribute("href")).toBe("/concepts/NET-005");
+
+  const labs = within(screen.getByRole("list", { name: "실습 이력" }));
+  expect(labs.getByText("2번째 검증에 통과 · 12분 걸림")).toBeTruthy();
+  expect(labs.getByText("아직 해 보지 않았습니다")).toBeTruthy();
+  expect(labs.getAllByRole("link", { name: /실습 열기/ }).map((a) => a.getAttribute("href"))).toEqual(["/labs?start=LAB-001", "/labs?start=LAB-002"]);
+});
+
+test("대시보드에서 전체·카테고리·취약 개념의 학습을 바로 시작하고, 마치면 대시보드로 돌아온다", async () => {
+  const basics = { ...CARD, card_id: 9, concept_id: "NET-005", concept_title: "IP 주소", category: "네트워크 기본", question: "서브넷이란?" };
+  const calls = mockApi({ "GET /reviews/due": () => [200, [...ROUTING_DUE, basics]], "GET /dashboard/summary": () => [200, SUMMARY] });
+  const user = userEvent.setup();
+  window.history.pushState(null, "", "/dashboard");
+  render(<App />);
+
+  await user.click(await screen.findByRole("button", { name: "학습 시작 · 3장" }));
+  expect(screen.getByRole("heading", { name: CARD.question })).toBeTruthy();
+  expect(screen.getByText("1 / 3")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "목록" }));
+  expect(await screen.findByRole("heading", { level: 1, name: "대시보드" })).toBeTruthy();
+  expect(window.location.pathname).toBe("/dashboard");
+
+  const stages = await screen.findByLabelText("전체 5장: 익숙함 1, 복습 중 1, 학습 중 1, 새 카드 2");
+  await user.click(within(stages.closest("ul")!).getByRole("button", { name: "네트워크 기본 복습 시작 (1장)" }));
+  expect(screen.getByRole("heading", { name: "서브넷이란?" })).toBeTruthy();
+  expect(screen.getByText("1 / 1")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "목록" }));
+
+  await user.click(await screen.findByRole("button", { name: "Static Routing 복습 시작 (2장)" }));
+  expect(screen.getByText("1 / 2")).toBeTruthy();
+  expect(count(calls, "GET /dashboard/summary")).toBe(3); // 돌아올 때마다 새로 계산한다
+});
+
+test("기록이 없으면 대시보드는 빈 상태를 알리고 시작 버튼을 막는다", async () => {
+  const empty = {
+    ...SUMMARY,
+    today: { due: 0, overdue: 0, reviewed: 0, concepts: 1, cards: 3, streak_days: 0 },
+    reviews_by_day: SUMMARY.reviews_by_day.map((d) => ({ ...d, again: 0, hard: 0, good: 0, easy: 0 })),
+    due_by_day: SUMMARY.due_by_day.map((d) => ({ ...d, cards: 0 })),
+    errors_by_week: SUMMARY.errors_by_week.map((w) => ({ ...w, reviews: 0, wrong: 0 })),
+    stages: { new: 3, learning: 0, review: 0, mature: 0 },
+    categories: [{ category: null, stages: { new: 3, learning: 0, review: 0, mature: 0 }, reviews: 0, wrong: 0 }],
+    weak_concepts: [],
+    labs: [],
+  };
+  mockApi({ "GET /reviews/due": () => [200, []], "GET /dashboard/summary": () => [200, empty] });
+  window.history.pushState(null, "", "/dashboard");
+  render(<App />);
+
+  expect(await screen.findAllByText("최근 4주 동안 복습 기록이 없습니다.")).toHaveLength(2); // 복습량·오답률
+  expect(screen.getByText("앞으로 7일 동안 복습할 카드가 없습니다.")).toBeTruthy();
+  expect(screen.getByText("기준에 걸린 개념이 없습니다.")).toBeTruthy();
+  expect(screen.getByText("밀린 복습 없음")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /학습 시작/ })).toBeNull();
+  const none = screen.getAllByRole("button", { name: /지금 복습할 카드 없음/ });
+  expect(none.map((b) => b.getAttribute("aria-label"))).toEqual(["분류 없음 지금 복습할 카드 없음", "전체 지금 복습할 카드 없음", "분류 없음 지금 복습할 카드 없음"]);
+  expect(none.every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+});
